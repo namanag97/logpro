@@ -342,6 +342,190 @@ orderLog := store.ProjectByObjectType("Order")
 
 ---
 
+## Universal Event Store API (OCEL + N-Column Ingest)
+
+### Schema Injection (`pkg/ingest/schema/`)
+
+The schema package extends Arrow schema inference with OCEL 2.0 nested column support.
+
+```go
+import "github.com/logflow/logflow/pkg/ingest/schema"
+
+// Get the OCEL nested column type: LIST<STRUCT<object_id: STRING, object_type: STRING>>
+ocelType := schema.OCELObjectType()
+
+// Inject the ocel_objects column into any inferred schema
+enrichedSchema := schema.InjectOCELColumn(existingSchema)
+
+// Detect which columns are likely object references (e.g., "order_id" → type "order")
+hints := schema.IdentifyObjectColumns(existingSchema)
+
+// Build a new RecordBatch with ocel_objects populated from identified columns
+enrichedBatch, err := schema.EnrichBatchWithOCEL(alloc, batch, hints)
+```
+
+**Key types:**
+
+| Type | Purpose |
+|------|---------|
+| `ObjectColumnHint` | Describes a column identified as an OCEL object reference (field index, object type, role) |
+| `ObjectRole` | `ObjectRoleID` (column holds object IDs) or `ObjectRoleType` (column holds type labels) |
+
+**Constants:**
+
+- `OCELObjectsColumn = "ocel_objects"` — reserved column name
+
+### Dynamic Parquet Writer (`pkg/ingest/decoders/`, `pkg/ingest/sinks/`)
+
+The CSV decoder's `createBuilders()` handles Arrow nested types:
+
+```go
+// These Arrow types are now supported in builder creation:
+// arrow.LIST   → array.NewListBuilder(alloc, elemType)
+// arrow.STRUCT → array.NewStructBuilder(alloc, structType)
+```
+
+The Parquet sink writes OCEL metadata alongside existing `logflow.*` keys:
+
+| Metadata Key | Value | When Written |
+|-------------|-------|--------------|
+| `ocel:attributes` | Comma-separated list of all column names | Always |
+| `ocel:object_types` | Comma-separated object types | When `ocel_objects` column present |
+| `ocel:relationships` | Relationship descriptors | When `ocel_objects` column present |
+
+Pass object types via `opts.Metadata["ocel_object_types"]` and relationships via `opts.Metadata["ocel_relationships"]`.
+
+### Attribute Bitmap Indexes (`pkg/index/`)
+
+Roaring bitmap indexes for fast attribute lookups across Arrow RecordBatches.
+
+```go
+import "github.com/logflow/logflow/pkg/index"
+
+idx := index.NewAttributeIndex()
+
+// Index Arrow batches (multi-batch files use rowOffset for global positioning)
+idx.IndexBatch(batch, 0)
+idx.IndexBatch(batch2, uint32(batch.NumRows()))
+
+// Point lookup: which rows have activity == "Submit Order"?
+bm := idx.Lookup("activity", "Submit Order")
+
+// Multi-attribute AND: activity == "Submit Order" AND resource == "Alice"
+bm := idx.LookupAnd(map[string]string{
+    "activity": "Submit Order",
+    "resource": "Alice",
+})
+
+// Multi-attribute OR
+bm := idx.LookupOr(conditions)
+
+// Inspect the index
+idx.Columns()                   // []string of indexed column names
+idx.Cardinality("activity")     // number of distinct values
+idx.DistinctValues("activity")  // all distinct values
+idx.RowCount()                  // total rows indexed
+
+// Serialize / deserialize
+idx.WriteTo(writer)
+idx.ReadFrom(reader)
+```
+
+**Design details:**
+- Skips `LIST` and `STRUCT` columns (not flat-indexable)
+- Dictionary-encoded Arrow columns are resolved through the dictionary automatically
+- Thread-safe via `sync.RWMutex` (concurrent reads, exclusive writes)
+
+### DuckDB Parquet Querier (`pkg/ocel/`)
+
+Query OCEL-enriched Parquet files using DuckDB `read_parquet()` and `UNNEST()`.
+
+```go
+import "github.com/logflow/logflow/pkg/ocel"
+
+q, err := ocel.NewParquetQuerier()
+defer q.Close()
+
+// Query flat columns only
+rows, err := q.QueryFlat(ctx, "events.parquet", `activity = 'Submit'`, "case_id", "activity")
+
+// UNNEST ocel_objects to join flat attributes with object references
+rows, err := q.QueryWithObjects(ctx, "events.parquet", `obj.object_type = 'Order'`)
+
+// Filter by object type or object ID
+rows, err := q.QueryByObjectType(ctx, "events.parquet", "Order")
+rows, err := q.QueryByObjectID(ctx, "events.parquet", "ORD-12345")
+
+// Aggregate queries
+types, err := q.QueryObjectTypes(ctx, "events.parquet")
+counts, err := q.QueryObjectCounts(ctx, "events.parquet") // map[type]count
+
+// Discover an Object-Centric DFG directly from Parquet
+dfg, err := q.DiscoverDFGFromParquet(ctx, "events.parquet", "activity", "timestamp")
+// dfg.Edges["Order"]["Submit"]["Approve"] = 42
+// dfg.ObjectTypes = ["Order", "Customer"]
+// dfg.Activities = ["Submit", "Approve", "Ship"]
+
+// Raw SQL with read_parquet() and UNNEST()
+rows, err := q.Raw(ctx, `
+    SELECT obj.object_type, COUNT(*)
+    FROM read_parquet('events.parquet') t,
+    UNNEST(t.ocel_objects) AS obj(object_id, object_type)
+    GROUP BY obj.object_type
+`)
+```
+
+### PMPT Object Awareness (`pkg/pmpt/`)
+
+ProcessNode now carries roaring bitmaps for cases and OCEL objects.
+
+```go
+import "github.com/logflow/logflow/pkg/pmpt"
+
+// Enable object tracking in the builder
+cfg := pmpt.DefaultBuilderConfig()
+cfg.IncludeObjects = true
+builder := pmpt.NewBuilder(cfg)
+
+// Add events with object references (model.Event.Objects field)
+builder.Add(event)
+
+tree := builder.FlushAll()
+
+// Each ProcessNode now has:
+node.CaseBitmap                  // *roaring.Bitmap — which cases passed through this node
+node.ObjectCounts                // map[string]int64 — distinct objects per type
+node.ObjectBitmap                // map[string]*roaring.Bitmap — object IDs per type
+```
+
+**New types:**
+
+| Type | Purpose |
+|------|---------|
+| `OCELNode` | Wraps `ProcessNode` with `ObjectTypes []string` and `ObjectTypeFrequency map[string]float64` |
+| `ObjectTrace` | Extends `Trace` with per-step `Objects [][]ObjectRef` |
+| `ObjectRef` | `{ObjectID, ObjectType string}` — OCEL object reference on a tree node |
+
+**Event model extension (`internal/model/`):**
+
+```go
+type Event struct {
+    CaseID     []byte
+    Activity   []byte
+    Timestamp  int64
+    Resource   []byte
+    Attributes []Attribute
+    Objects    []ObjectRef  // NEW: OCEL object references
+}
+
+type ObjectRef struct {
+    ObjectID   []byte
+    ObjectType []byte
+}
+```
+
+---
+
 ## Research References
 
 - [OCEL 2.0 Specification](https://arxiv.org/html/2403.01975v1)
