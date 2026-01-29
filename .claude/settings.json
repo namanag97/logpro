@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "pre_tool_call": [
+      {
+        "tools": ["Write", "Edit"],
+        "command": "git add -A && git commit -m 'Auto-backup before edit' --allow-empty 2>/dev/null || true"
+      }
+    ],
+    "post_tool_call": [
+      {
+        "tools": ["Bash"],
+        "match": "rm |rm -rf",
+        "command": "echo 'WARNING: Delete detected' && git status"
+      }
+    ]
+  }
+}

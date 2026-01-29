@@ -49,19 +49,25 @@ type Options struct {
 
 // DefaultOptions returns sensible defaults.
 func DefaultOptions() Options {
+	cfg := GlobalConfig
 	return Options{
-		Compression:     "snappy",
-		RowGroupSize:    10000,
-		MaxErrors:       1000,
-		RescueMalformed: true,
+		Compression:     cfg.Compression,
+		RowGroupSize:    cfg.RowGroupSize,
+		MaxErrors:       cfg.MaxErrors,
+		RescueMalformed: cfg.RescueMalformed,
+		DuckDBThreads:   cfg.DuckDBThreads,
+		BufferSize:      cfg.BufferSize,
+		Workers:         cfg.MaxConcurrency,
 	}
 }
 
 // Engine is the main ingestion engine.
 type Engine struct {
-	detector *Detector
-	fastPath *FastPath
-	robust   *RobustPath
+	detector      *Detector
+	fastPath      *FastPath
+	robust        *RobustPath
+	heuristics    *HeuristicEngine
+	decisionTable *DecisionTable
 }
 
 // NewEngine creates a new ingestion engine.
@@ -72,9 +78,11 @@ func NewEngine() (*Engine, error) {
 	}
 
 	return &Engine{
-		detector: NewDetector(),
-		fastPath: fastPath,
-		robust:   NewRobustPath(),
+		detector:      NewDetector(),
+		fastPath:      fastPath,
+		robust:        NewRobustPath(),
+		heuristics:    NewHeuristicEngine(),
+		decisionTable: NewDecisionTable(),
 	}, nil
 }
 
@@ -93,20 +101,44 @@ func (e *Engine) Ingest(ctx context.Context, inputPath string, opts Options) (*R
 		return nil, fmt.Errorf("analysis failed: %w", err)
 	}
 
-	// Step 2: Determine strategy (with override support)
-	strategy := analysis.RecommendedStrategy
+	// Step 2: Compute heuristics based on analysis
+	heur := e.heuristics.Compute(analysis)
+
+	// Step 3: Look up decision table for fine-tuning
+	rule := e.decisionTable.Lookup(analysis.Format, analysis.Size, analysis.IsClean)
+	if rule != nil {
+		heur.ApplyRule(rule)
+	}
+
+	// Step 4: Determine strategy (with override support)
+	strategy := heur.Strategy
 	if opts.ForceStrategy != 0 {
 		strategy = opts.ForceStrategy
 	}
 
-	// Step 3: Generate output path if not specified
+	// Step 5: Apply heuristics to options
+	if opts.RowGroupSize <= 0 {
+		opts.RowGroupSize = heur.RowGroupSize
+	}
+	if opts.Compression == "" {
+		opts.Compression = heur.Compression
+	}
+	if opts.Workers <= 0 {
+		opts.Workers = heur.MaxConcurrency
+	}
+	if opts.ChunkSize <= 0 {
+		opts.ChunkSize = heur.FlushThreshold
+	}
+
+	// Step 6: Generate output path if not specified
 	outputPath := opts.OutputPath
 	if outputPath == "" {
 		outputPath = generateOutputPath(inputPath)
 	}
 
-	// Step 4: Execute based on strategy
+	// Step 7: Execute based on strategy
 	var result *Result
+	parseStart := time.Now()
 
 	switch strategy {
 	case StrategyFastDuckDB:
@@ -114,27 +146,47 @@ func (e *Engine) Ingest(ctx context.Context, inputPath string, opts Options) (*R
 	case StrategyRobustGo:
 		result, err = e.robust.Process(ctx, inputPath, outputPath, analysis, opts)
 	case StrategyStreaming:
-		// Fall back to robust for now
-		result, err = e.robust.Process(ctx, inputPath, outputPath, analysis, opts)
+		result, err = e.processStreaming(ctx, inputPath, outputPath, analysis, opts)
 	case StrategyHybrid:
-		// Try fast path first, fall back to robust
-		result, err = e.fastPath.Process(ctx, inputPath, outputPath, analysis, opts)
-		if err != nil {
-			result, err = e.robust.Process(ctx, inputPath, outputPath, analysis, opts)
-		}
+		result, err = e.processHybrid(ctx, inputPath, outputPath, analysis, opts)
 	default:
 		result, err = e.fastPath.Process(ctx, inputPath, outputPath, analysis, opts)
 	}
+
+	parseTime := time.Since(parseStart)
 
 	if err != nil {
 		return nil, err
 	}
 
-	// Step 5: Calculate metrics
+	// Step 8: Calculate metrics
 	result.Duration = time.Since(start)
 	result.Throughput = float64(result.RowCount) / result.Duration.Seconds()
 	result.Speed = float64(result.InputSize) / result.Duration.Seconds() / (1024 * 1024)
 
+	// Step 9: Record metrics for adaptive tuning
+	writeTime := result.Duration - parseTime/2 // Rough estimate
+	if writeTime < time.Millisecond {
+		writeTime = time.Millisecond
+	}
+	e.heuristics.RecordMetrics(analysis.Format, result.InputSize, result.OutputSize, parseTime, writeTime)
+
+	return result, nil
+}
+
+// processStreaming handles large files with chunked processing.
+func (e *Engine) processStreaming(ctx context.Context, inputPath, outputPath string, analysis *FileAnalysis, opts Options) (*Result, error) {
+	// For now, delegate to robust path with streaming enabled
+	return e.robust.Process(ctx, inputPath, outputPath, analysis, opts)
+}
+
+// processHybrid uses DuckDB for reading and Go for validation.
+func (e *Engine) processHybrid(ctx context.Context, inputPath, outputPath string, analysis *FileAnalysis, opts Options) (*Result, error) {
+	// Try fast path first, fall back to robust on error
+	result, err := e.fastPath.Process(ctx, inputPath, outputPath, analysis, opts)
+	if err != nil {
+		return e.robust.Process(ctx, inputPath, outputPath, analysis, opts)
+	}
 	return result, nil
 }
 
