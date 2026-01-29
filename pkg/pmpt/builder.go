@@ -100,6 +100,13 @@ func (b *Builder) Add(event *model.Event) {
 	if b.cfg.IncludeTimestamps {
 		tb.timestamps = append(tb.timestamps, event.Timestamp)
 	}
+	if b.cfg.IncludeObjects && len(event.Objects) > 0 {
+		refs := make([]model.ObjectRef, len(event.Objects))
+		copy(refs, event.Objects)
+		tb.objects = append(tb.objects, refs)
+	} else if b.cfg.IncludeObjects {
+		tb.objects = append(tb.objects, nil)
+	}
 }
 
 // flushOldestTrace flushes the oldest trace to make room for new ones.
