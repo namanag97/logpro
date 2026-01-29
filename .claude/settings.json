@@ -9,15 +9,13 @@
             "command": "git add -A && git commit -m 'Auto-backup before edit' --allow-empty 2>/dev/null || true"
           }
         ]
-      }
-    ],
-    "PostToolUse": [
+      },
       {
         "matcher": "Bash",
         "hooks": [
           {
             "type": "command",
-            "command": "echo 'WARNING: Delete detected' && git status"
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/check-rm-git.sh"
           }
         ]
       }
