@@ -20,6 +20,16 @@ type Event struct {
 	// Attributes holds additional key-value pairs.
 	// Keys and values are stored as byte slices to avoid allocations.
 	Attributes []Attribute
+
+	// Objects holds OCEL object references for this event.
+	// Each reference links the event to an object with a type.
+	Objects []ObjectRef
+}
+
+// ObjectRef represents an OCEL object reference attached to an event.
+type ObjectRef struct {
+	ObjectID   []byte
+	ObjectType []byte
 }
 
 // Attribute represents a key-value pair for event metadata.
