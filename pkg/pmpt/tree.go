@@ -69,6 +69,33 @@ type ProcessNode struct {
 
 	// Depth is the distance from root (for visualization)
 	Depth int
+
+	// CaseBitmap tracks which case IDs passed through this node using a
+	// roaring bitmap. Each case is assigned a sequential uint32 ID by the
+	// builder. This enables O(1) set membership checks and efficient
+	// intersection/union across nodes.
+	CaseBitmap *roaring.Bitmap
+
+	// ObjectCounts tracks the number of distinct OCEL objects per object type
+	// that were involved in events passing through this node.
+	ObjectCounts map[string]int64
+
+	// ObjectBitmap tracks distinct object IDs per object type using roaring
+	// bitmaps. Keys are object types; values are bitmaps of object IDs
+	// (mapped to uint32 by the builder).
+	ObjectBitmap map[string]*roaring.Bitmap
+}
+
+// OCELNode wraps a ProcessNode with additional object-centric analytics.
+type OCELNode struct {
+	*ProcessNode
+
+	// ObjectTypes lists the distinct object types observed at this node.
+	ObjectTypes []string
+
+	// ObjectTypeFrequency maps object type -> fraction of events at this node
+	// that involve at least one object of that type.
+	ObjectTypeFrequency map[string]float64
 }
 
 // Tree represents a Process Merkle Patricia Tree.
