@@ -57,6 +57,7 @@ func (e *Event) Reset() {
 	e.Timestamp = 0
 	e.Resource = e.Resource[:0]
 	e.Attributes = e.Attributes[:0]
+	e.Objects = e.Objects[:0]
 }
 
 // EventBatch holds a slice of events for batch processing.
