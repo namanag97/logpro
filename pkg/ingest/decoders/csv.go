@@ -438,6 +438,12 @@ func (d *CSVDecoder) createBuilders(schema *arrow.Schema) []array.Builder {
 			builders[i] = array.NewBooleanBuilder(d.alloc)
 		case arrow.TIMESTAMP:
 			builders[i] = array.NewTimestampBuilder(d.alloc, &arrow.TimestampType{Unit: arrow.Microsecond})
+		case arrow.LIST:
+			lt := field.Type.(*arrow.ListType)
+			builders[i] = array.NewListBuilder(d.alloc, lt.Elem())
+		case arrow.STRUCT:
+			st := field.Type.(*arrow.StructType)
+			builders[i] = array.NewStructBuilder(d.alloc, st)
 		default:
 			builders[i] = array.NewStringBuilder(d.alloc)
 		}
