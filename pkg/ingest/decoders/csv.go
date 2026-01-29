@@ -506,6 +506,11 @@ func (d *CSVDecoder) appendRow(builders []array.Builder, schema *arrow.Schema, f
 				builder.AppendNull()
 			}
 
+		case arrow.LIST, arrow.STRUCT:
+			// Nested types cannot be populated from flat CSV fields.
+			// They are filled by enrichment steps after decoding.
+			builder.AppendNull()
+
 		default:
 			// Validate UTF-8
 			if !utf8.ValidString(s) {
