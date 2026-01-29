@@ -161,9 +161,16 @@ func (b *Builder) flushTrace(tb *traceBuilder) {
 			Objects: objRefs,
 		}
 
-		// Temporarily unlock for tree operations
+		// Snapshot objectIDs so the tree operation uses an isolated copy.
+		// This prevents a concurrent Add() from racing on the live map
+		// while the tree holds a reference to it.
+		oidSnapshot := make(map[string]uint32, len(b.objectIDs))
+		for k, v := range b.objectIDs {
+			oidSnapshot[k] = v
+		}
+
 		b.mu.Unlock()
-		b.tree.AddTraceWithObjects(ot, caseSeqID, b.objectIDs)
+		b.tree.AddTraceWithObjects(ot, caseSeqID, oidSnapshot)
 		b.mu.Lock()
 	} else {
 		trace := Trace{
