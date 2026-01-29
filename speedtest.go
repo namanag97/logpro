@@ -16,7 +16,7 @@ func main() {
 
 	os.Remove(outputPath)
 
-	fmt.Println("=== LogFlow Speed Test ===\n")
+	fmt.Println("=== LogFlow Speed Test ===")
 
 	// Create engine
 	engine, err := ingest.NewEngine()
