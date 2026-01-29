@@ -71,14 +71,25 @@ func (d *XESDecoder) Formats() []core.Format {
 	return []core.Format{core.FormatXES}
 }
 
-// xesEvent holds parsed XES event data
+// xesEvent holds parsed XES event data including trace-level attributes
 type xesEvent struct {
-	caseID     string
-	activity   string
-	timestamp  time.Time
-	resource   string
-	lifecycle  string
-	attributes map[string]interface{}
+	// Standard XES fields
+	caseID    string
+	activity  string
+	timestamp time.Time
+	resource  string
+	lifecycle string
+
+	// Trace-level attributes (inherited by all events in trace)
+	traceAttrs map[string]interface{}
+
+	// Event-level attributes
+	eventAttrs map[string]interface{}
+
+	// Lineage/audit fields
+	sourceFile      string
+	ingestTimestamp time.Time
+	eventIndex      int64
 }
 
 // Decode decodes an XES source into Arrow batches.
@@ -114,14 +125,14 @@ func (d *XESDecoder) Decode(ctx context.Context, source core.Source, opts core.D
 			batchSize = 8192
 		}
 
-		d.decodeXES(ctx, reader, schema, batchSize, opts, out)
+		d.decodeXES(ctx, reader, schema, batchSize, opts, out, source.Location())
 	}()
 
 	return out, nil
 }
 
 // decodeXES performs streaming XES parsing using a state machine
-func (d *XESDecoder) decodeXES(ctx context.Context, reader io.Reader, schema *arrow.Schema, batchSize int, opts core.DecodeOptions, out chan<- core.DecodedBatch) {
+func (d *XESDecoder) decodeXES(ctx context.Context, reader io.Reader, schema *arrow.Schema, batchSize int, opts core.DecodeOptions, out chan<- core.DecodedBatch, sourceFile string) {
 	bufReader := bufio.NewReaderSize(reader, 256*1024)
 
 	builders := d.createBuilders(schema)
@@ -129,11 +140,14 @@ func (d *XESDecoder) decodeXES(ctx context.Context, reader io.Reader, schema *ar
 
 	state := xesStateInit
 	var currentCaseID string
+	var currentTraceAttrs map[string]interface{}
 	var currentEvent *xesEvent
 	var rowCount int
 	var batchIndex int
 	var errors []core.RowError
 	var lineNum int64
+	var eventIndex int64
+	ingestTime := time.Now()
 
 	for {
 		select {
@@ -168,17 +182,24 @@ func (d *XESDecoder) decodeXES(ctx context.Context, reader io.Reader, schema *ar
 		case d.isOpenTag(line, xmlTrace):
 			state = xesStateTrace
 			currentCaseID = ""
+			currentTraceAttrs = make(map[string]interface{})
 
 		case d.isCloseTag(line, xmlTrace):
 			state = xesStateLog
 			currentCaseID = ""
+			currentTraceAttrs = nil
 
 		case d.isOpenTag(line, xmlEvent):
 			state = xesStateEvent
 			currentEvent = &xesEvent{
-				caseID:     currentCaseID,
-				attributes: make(map[string]interface{}),
+				caseID:          currentCaseID,
+				traceAttrs:      currentTraceAttrs,
+				eventAttrs:      make(map[string]interface{}),
+				sourceFile:      sourceFile,
+				ingestTimestamp: ingestTime,
+				eventIndex:      eventIndex,
 			}
+			eventIndex++
 
 		case d.isCloseTag(line, xmlEvent):
 			if currentEvent != nil {
@@ -211,10 +232,18 @@ func (d *XESDecoder) decodeXES(ctx context.Context, reader io.Reader, schema *ar
 			state = xesStateTrace
 
 		case state == xesStateTrace && d.isAttributeTag(line):
-			// Trace-level attribute (for case ID)
+			// Trace-level attribute (for case ID and trace attributes)
 			key, value := d.extractAttribute(line)
+			if key == nil {
+				continue
+			}
+			keyStr := string(key)
+
 			if bytes.Equal(key, xesConceptName) {
 				currentCaseID = string(value)
+			} else {
+				// Store trace attribute with proper type
+				currentTraceAttrs[keyStr] = d.parseAttributeValue(line, value)
 			}
 
 		case state == xesStateEvent && d.isAttributeTag(line):
@@ -246,6 +275,7 @@ func (d *XESDecoder) decodeXES(ctx context.Context, reader io.Reader, schema *ar
 }
 
 // InferSchema infers schema from XES data by sampling events.
+// Captures both trace-level and event-level attributes.
 func (d *XESDecoder) InferSchema(ctx context.Context, source core.Source, sampleSize int) (*arrow.Schema, error) {
 	if sampleSize <= 0 {
 		sampleSize = 1000
@@ -259,13 +289,24 @@ func (d *XESDecoder) InferSchema(ctx context.Context, source core.Source, sample
 
 	bufReader := bufio.NewReaderSize(reader, 64*1024)
 
-	// Track attribute types
-	attrTypes := make(map[string]map[inferredType]int)
+	// Track attribute types - separate trace and event attrs
+	traceAttrTypes := make(map[string]map[inferredType]int)
+	eventAttrTypes := make(map[string]map[inferredType]int)
 
-	// Standard XES fields
-	standardFields := []string{"case_id", "activity", "timestamp", "resource", "lifecycle"}
-	for _, f := range standardFields {
-		attrTypes[f] = make(map[inferredType]int)
+	// Standard XES fields (always present)
+	standardFields := map[string]arrow.DataType{
+		"case_id":   arrow.BinaryTypes.String,
+		"activity":  arrow.BinaryTypes.String,
+		"timestamp": &arrow.TimestampType{Unit: arrow.Microsecond},
+		"resource":  arrow.BinaryTypes.String,
+		"lifecycle": arrow.BinaryTypes.String,
+	}
+
+	// Lineage fields
+	lineageFields := map[string]arrow.DataType{
+		"_source_file":      arrow.BinaryTypes.String,
+		"_ingest_timestamp": &arrow.TimestampType{Unit: arrow.Microsecond},
+		"_event_index":      arrow.PrimitiveTypes.Int64,
 	}
 
 	state := xesStateInit
@@ -295,57 +336,112 @@ func (d *XESDecoder) InferSchema(ctx context.Context, source core.Source, sample
 		case d.isCloseTag(line, xmlEvent):
 			eventCount++
 			state = xesStateTrace
+
+		case state == xesStateTrace && d.isAttributeTag(line):
+			// Trace-level attribute
+			key, value := d.extractAttribute(line)
+			if key == nil || bytes.Equal(key, xesConceptName) {
+				continue
+			}
+			keyStr := "trace_" + string(key) // Prefix trace attrs
+			if traceAttrTypes[keyStr] == nil {
+				traceAttrTypes[keyStr] = make(map[inferredType]int)
+			}
+			traceAttrTypes[keyStr][d.inferAttributeType(line, value)]++
+
 		case state == xesStateEvent && d.isAttributeTag(line):
+			// Event-level attribute
 			key, value := d.extractAttribute(line)
 			if key == nil {
 				continue
 			}
-
 			keyStr := string(key)
-			attrType := d.inferAttributeType(line, value)
 
-			// Map standard XES attributes to our fields
-			switch {
-			case bytes.Equal(key, xesConceptName):
-				attrTypes["activity"][typeString]++
-			case bytes.Equal(key, xesTimeStamp):
-				attrTypes["timestamp"][typeTimestamp]++
-			case bytes.Equal(key, xesOrgResource):
-				attrTypes["resource"][typeString]++
-			case bytes.Equal(key, xesLifecycleTr):
-				attrTypes["lifecycle"][typeString]++
-			default:
-				// Custom attribute
-				if attrTypes[keyStr] == nil {
-					attrTypes[keyStr] = make(map[inferredType]int)
-				}
-				attrTypes[keyStr][attrType]++
+			// Skip standard fields (already handled)
+			if bytes.Equal(key, xesConceptName) || bytes.Equal(key, xesTimeStamp) ||
+				bytes.Equal(key, xesOrgResource) || bytes.Equal(key, xesLifecycleTr) {
+				continue
 			}
+
+			if eventAttrTypes[keyStr] == nil {
+				eventAttrTypes[keyStr] = make(map[inferredType]int)
+			}
+			eventAttrTypes[keyStr][d.inferAttributeType(line, value)]++
 		}
 	}
 
-	// Always have case_id as string
-	attrTypes["case_id"][typeString]++
+	// Build schema: standard fields + trace attrs + event attrs + lineage
+	var arrowFields []arrow.Field
 
-	// Sort field names for consistent ordering
-	var fieldNames []string
-	for name := range attrTypes {
-		fieldNames = append(fieldNames, name)
-	}
-	sort.Strings(fieldNames)
-
-	// Build schema
-	arrowFields := make([]arrow.Field, len(fieldNames))
-	for i, name := range fieldNames {
-		counts := attrTypes[name]
-		arrowFields[i] = arrow.Field{
+	// 1. Standard fields (in order)
+	for _, name := range []string{"case_id", "activity", "timestamp", "resource", "lifecycle"} {
+		arrowFields = append(arrowFields, arrow.Field{
 			Name:     name,
-			Type:     d.selectType(counts),
+			Type:     standardFields[name],
 			Nullable: true,
-		}
+		})
+	}
+
+	// 2. Trace-level attributes (sorted for consistency)
+	var traceNames []string
+	for name := range traceAttrTypes {
+		traceNames = append(traceNames, name)
+	}
+	sort.Strings(traceNames)
+	for _, name := range traceNames {
+		arrowFields = append(arrowFields, arrow.Field{
+			Name:     name,
+			Type:     d.selectType(traceAttrTypes[name]),
+			Nullable: true,
+		})
+	}
+
+	// 3. Event-level attributes (sorted)
+	var eventNames []string
+	for name := range eventAttrTypes {
+		eventNames = append(eventNames, name)
+	}
+	sort.Strings(eventNames)
+	for _, name := range eventNames {
+		arrowFields = append(arrowFields, arrow.Field{
+			Name:     name,
+			Type:     d.selectType(eventAttrTypes[name]),
+			Nullable: true,
+		})
+	}
+
+	// 4. Lineage fields
+	for _, name := range []string{"_source_file", "_ingest_timestamp", "_event_index"} {
+		arrowFields = append(arrowFields, arrow.Field{
+			Name:     name,
+			Type:     lineageFields[name],
+			Nullable: false,
+		})
 	}
 
 	return arrow.NewSchema(arrowFields, nil), nil
+}
+
+// parseAttributeValue parses an attribute value with proper type
+func (d *XESDecoder) parseAttributeValue(line, value []byte) interface{} {
+	valueStr := string(value)
+
+	if bytes.HasPrefix(line[1:], xmlInt) {
+		if v, err := strconv.ParseInt(valueStr, 10, 64); err == nil {
+			return v
+		}
+	} else if bytes.HasPrefix(line[1:], xmlFloat) {
+		if v, err := strconv.ParseFloat(valueStr, 64); err == nil {
+			return v
+		}
+	} else if bytes.HasPrefix(line[1:], xmlBool) {
+		return valueStr == "true"
+	} else if bytes.HasPrefix(line[1:], xmlDate) {
+		if ts, err := d.parseXESTimestamp(value); err == nil {
+			return ts
+		}
+	}
+	return valueStr
 }
 
 // isOpenTag checks if line is an opening tag for the given element.
@@ -441,33 +537,9 @@ func (d *XESDecoder) processEventAttribute(line []byte, event *xesEvent) {
 		event.lifecycle = string(value)
 
 	default:
-		// Store as generic attribute with proper type
+		// Store as event attribute with proper type
 		keyStr := string(key)
-		valueStr := string(value)
-
-		if bytes.HasPrefix(line[1:], xmlInt) {
-			if v, err := strconv.ParseInt(valueStr, 10, 64); err == nil {
-				event.attributes[keyStr] = v
-			} else {
-				event.attributes[keyStr] = valueStr
-			}
-		} else if bytes.HasPrefix(line[1:], xmlFloat) {
-			if v, err := strconv.ParseFloat(valueStr, 64); err == nil {
-				event.attributes[keyStr] = v
-			} else {
-				event.attributes[keyStr] = valueStr
-			}
-		} else if bytes.HasPrefix(line[1:], xmlBool) {
-			event.attributes[keyStr] = valueStr == "true"
-		} else if bytes.HasPrefix(line[1:], xmlDate) {
-			if ts, err := d.parseXESTimestamp(value); err == nil {
-				event.attributes[keyStr] = ts
-			} else {
-				event.attributes[keyStr] = valueStr
-			}
-		} else {
-			event.attributes[keyStr] = valueStr
-		}
+		event.eventAttrs[keyStr] = d.parseAttributeValue(line, value)
 	}
 }
 
@@ -480,6 +552,8 @@ func (d *XESDecoder) parseXESTimestamp(ts []byte) (time.Time, error) {
 		"2006-01-02T15:04:05.000Z",
 		"2006-01-02T15:04:05Z",
 		"2006-01-02T15:04:05",
+		"2006-01-02T15:04:05.000+01:00",
+		"2006-01-02T15:04:05.000+02:00",
 		time.RFC3339,
 		time.RFC3339Nano,
 	}
@@ -574,6 +648,7 @@ func (d *XESDecoder) appendEvent(builders []array.Builder, schema *arrow.Schema,
 		var value interface{}
 
 		switch field.Name {
+		// Standard fields
 		case "case_id":
 			value = event.caseID
 		case "activity":
@@ -584,8 +659,27 @@ func (d *XESDecoder) appendEvent(builders []array.Builder, schema *arrow.Schema,
 			value = event.resource
 		case "lifecycle":
 			value = event.lifecycle
+
+		// Lineage fields
+		case "_source_file":
+			value = event.sourceFile
+		case "_ingest_timestamp":
+			value = event.ingestTimestamp
+		case "_event_index":
+			value = event.eventIndex
+
 		default:
-			value = event.attributes[field.Name]
+			// Check trace attributes first (prefixed with "trace_")
+			if len(field.Name) > 6 && field.Name[:6] == "trace_" {
+				if event.traceAttrs != nil {
+					value = event.traceAttrs[field.Name[6:]]
+				}
+			} else {
+				// Event attribute
+				if event.eventAttrs != nil {
+					value = event.eventAttrs[field.Name]
+				}
+			}
 		}
 
 		d.appendValue(builders[i], field.Type, value)
