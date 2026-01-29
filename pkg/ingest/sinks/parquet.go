@@ -17,17 +17,22 @@ import (
 	"github.com/logflow/logflow/pkg/ingest/core"
 )
 
+// Version info for metadata
+const logflowVersion = "1.0.0"
+
 // ParquetSink writes Arrow batches to Parquet files.
 type ParquetSink struct {
 	mu sync.Mutex
 
-	path       string
-	schema     *arrow.Schema
-	opts       core.SinkOptions
-	writer     *pqarrow.FileWriter
-	file       *os.File
+	path        string
+	schema      *arrow.Schema
+	opts        core.SinkOptions
+	writer      *pqarrow.FileWriter
+	file        *os.File
 	rowsWritten int64
 	startTime   time.Time
+	sourceFile  string // Original source file path
+	sourceFormat string // Original format (csv, json, xes, etc.)
 }
 
 // NewParquetSink creates a Parquet sink.
@@ -41,9 +46,46 @@ func (s *ParquetSink) Open(ctx context.Context, schema *arrow.Schema, opts core.
 	defer s.mu.Unlock()
 
 	s.path = opts.Path
-	s.schema = schema
 	s.opts = opts
 	s.startTime = time.Now()
+
+	// Extract source info from metadata if provided
+	if opts.Metadata != nil {
+		s.sourceFile = opts.Metadata["source_file"]
+		s.sourceFormat = opts.Metadata["source_format"]
+	}
+
+	// Add lineage metadata to schema
+	metaKeys := []string{
+		"logflow.version",
+		"logflow.created_at",
+		"logflow.schema_fields",
+	}
+	metaValues := []string{
+		logflowVersion,
+		s.startTime.Format(time.RFC3339),
+		fmt.Sprintf("%d", schema.NumFields()),
+	}
+	if s.sourceFile != "" {
+		metaKeys = append(metaKeys, "logflow.source_file")
+		metaValues = append(metaValues, s.sourceFile)
+	}
+	if s.sourceFormat != "" {
+		metaKeys = append(metaKeys, "logflow.source_format")
+		metaValues = append(metaValues, s.sourceFormat)
+	}
+	// Add user-provided metadata
+	for k, v := range opts.Metadata {
+		if k != "source_file" && k != "source_format" {
+			metaKeys = append(metaKeys, "logflow.user."+k)
+			metaValues = append(metaValues, v)
+		}
+	}
+
+	// Create schema with metadata
+	schemaMeta := arrow.NewMetadata(metaKeys, metaValues)
+	schemaWithMeta := arrow.NewSchema(schema.Fields(), &schemaMeta)
+	s.schema = schemaWithMeta
 
 	// Ensure directory exists
 	if err := os.MkdirAll(filepath.Dir(s.path), 0755); err != nil {
@@ -62,13 +104,14 @@ func (s *ParquetSink) Open(ctx context.Context, schema *arrow.Schema, opts core.
 		parquet.WithCompression(getCompression(opts.Compression)),
 		parquet.WithDictionaryDefault(opts.DictionaryEncoding),
 		parquet.WithStats(opts.Statistics),
+		parquet.WithCreatedBy("LogFlow "+logflowVersion),
 	)
 
 	arrowProps := pqarrow.NewArrowWriterProperties(
 		pqarrow.WithStoreSchema(),
 	)
 
-	writer, err := pqarrow.NewFileWriter(schema, file, writerProps, arrowProps)
+	writer, err := pqarrow.NewFileWriter(schemaWithMeta, file, writerProps, arrowProps)
 	if err != nil {
 		file.Close()
 		return fmt.Errorf("failed to create Parquet writer: %w", err)
