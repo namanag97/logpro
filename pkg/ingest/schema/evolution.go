@@ -249,8 +249,8 @@ func mergeMergeNullable(old, new *arrow.Schema) (*arrow.Schema, error) {
 	// Keep old fields (widen types if needed)
 	for i := 0; i < old.NumFields(); i++ {
 		oldField := old.Field(i)
-		newFieldIdx, ok := new.FieldIndices(oldField.Name)
-		if ok && len(newFieldIdx) > 0 {
+		newFieldIdx := new.FieldIndices(oldField.Name)
+		if len(newFieldIdx) > 0 {
 			newField := new.Field(newFieldIdx[0])
 			// Use wider type if compatible
 			if isCompatibleTypeChange(oldField.Type, newField.Type) {
@@ -268,7 +268,7 @@ func mergeMergeNullable(old, new *arrow.Schema) (*arrow.Schema, error) {
 	// Add new nullable fields
 	for i := 0; i < new.NumFields(); i++ {
 		newField := new.Field(i)
-		if _, ok := old.FieldIndices(newField.Name); !ok {
+		if len(old.FieldIndices(newField.Name)) == 0 {
 			fields = append(fields, arrow.Field{
 				Name:     newField.Name,
 				Type:     newField.Type,
@@ -292,8 +292,8 @@ func mergeEvolving(old, new *arrow.Schema) (*arrow.Schema, error) {
 		oldField := old.Field(i)
 		seen[oldField.Name] = true
 
-		newFieldIdx, ok := new.FieldIndices(oldField.Name)
-		if ok && len(newFieldIdx) > 0 {
+		newFieldIdx := new.FieldIndices(oldField.Name)
+		if len(newFieldIdx) > 0 {
 			newField := new.Field(newFieldIdx[0])
 			// Pick wider type
 			mergedType := widerType(oldField.Type, newField.Type)

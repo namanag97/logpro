@@ -241,23 +241,24 @@ func readParquet(ctx context.Context, path string) ([]arrow.Record, *arrow.Schem
 		return nil, nil, err
 	}
 
-	var batches []arrow.Record
-	for rg := 0; rg < pqReader.NumRowGroups(); rg++ {
-		table, err := arrowReader.ReadRowGroup(rg)
-		if err != nil {
-			continue
-		}
+	// Read entire table
+	table, err := arrowReader.ReadTable(context.Background())
+	if err != nil {
+		return nil, nil, err
+	}
+	defer table.Release()
 
-		// Convert table to records
-		reader := NewTableReader(table, 8192)
-		for reader.Next() {
-			rec := reader.Record()
+	var batches []arrow.Record
+	// Convert table to records
+	tableReader := NewTableReader(table, 8192)
+	for tableReader.Next() {
+		rec := tableReader.Record()
+		if rec != nil {
 			rec.Retain()
 			batches = append(batches, rec)
 		}
-		reader.Release()
-		table.Release()
 	}
+	tableReader.Release()
 
 	_ = info
 	return batches, schema, nil

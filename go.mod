@@ -6,6 +6,7 @@ require (
 	github.com/apache/arrow/go/v14 v14.0.2
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/fsnotify/fsnotify v1.7.0
+	github.com/google/uuid v1.3.1
 	github.com/marcboeker/go-duckdb v1.5.6
 	github.com/schollz/progressbar/v3 v3.19.0
 	github.com/spf13/cobra v1.8.0

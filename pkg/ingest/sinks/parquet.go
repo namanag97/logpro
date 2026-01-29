@@ -110,13 +110,12 @@ func (s *ParquetSink) Close(ctx context.Context) (*core.SinkResult, error) {
 		return nil, fmt.Errorf("sink not open")
 	}
 
+	// Close writer (this also closes the underlying file)
 	if err := s.writer.Close(); err != nil {
 		return nil, fmt.Errorf("failed to close writer: %w", err)
 	}
-
-	if err := s.file.Close(); err != nil {
-		return nil, fmt.Errorf("failed to close file: %w", err)
-	}
+	s.writer = nil
+	s.file = nil
 
 	// Get file size
 	info, _ := os.Stat(s.path)

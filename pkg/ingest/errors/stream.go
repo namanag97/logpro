@@ -124,16 +124,13 @@ func (s *ErrorStream) Write(record ErrorRecord) error {
 	return nil
 }
 
-// WriteFromRowError converts a RowError to ErrorRecord and writes it.
-func (s *ErrorStream) WriteFromRowError(sourceID string, err RowError) error {
+// WriteFromRowError converts a core.RowError to ErrorRecord and writes it.
+func (s *ErrorStream) WriteFromRowError(sourceID string, rowNum int64, column string, err error) error {
 	return s.Write(ErrorRecord{
 		SourceID:  sourceID,
-		RowNumber: err.RowNumber,
-		Column:    err.Column,
-		RawData:   err.RawData,
-		ErrorType: err.ErrorType,
-		ErrorMsg:  err.Error.Error(),
-		Recovered: err.Recovered,
+		RowNumber: rowNum,
+		Column:    column,
+		ErrorMsg:  err.Error(),
 	})
 }
 
@@ -176,15 +173,6 @@ func (s *ErrorStream) Path() string {
 	return s.path
 }
 
-// RowError represents a row-level error (for internal use).
-type RowError struct {
-	RowNumber int64
-	Column    string
-	RawData   string
-	ErrorType string
-	Error     error
-	Recovered bool
-}
 
 // ErrorCollector collects errors for later processing.
 type ErrorCollector struct {

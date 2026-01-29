@@ -51,10 +51,7 @@ func (d *ParquetDecoder) Decode(ctx context.Context, source core.Source, opts co
 	}
 
 	// Create Parquet file reader
-	pqReader, err := file.NewParquetReader(readerAtAdapter{reader, size}, file.WithReadProps(&file.ReaderProperties{
-		BufferedStreamEnabled: true,
-		BufferSize:            8 * 1024 * 1024,
-	}))
+	pqReader, err := file.NewParquetReader(readerAtAdapter{reader, size})
 	if err != nil {
 		reader.Close()
 		return nil, fmt.Errorf("failed to create parquet reader: %w", err)
@@ -88,52 +85,38 @@ func (d *ParquetDecoder) Decode(ctx context.Context, source core.Source, opts co
 			batchSize = 8192
 		}
 
-		numRowGroups := pqReader.NumRowGroups()
-		batchIndex := 0
+		// Read entire table
+		table, err := arrowReader.ReadTable(ctx)
+		if err != nil {
+			return
+		}
+		defer table.Release()
 
-		for rg := 0; rg < numRowGroups; rg++ {
+		// Convert table to record batches
+		tableReader := array.NewTableReader(table, int64(batchSize))
+		defer tableReader.Release()
+
+		batchIndex := 0
+		for tableReader.Next() {
 			select {
 			case <-ctx.Done():
 				return
 			default:
 			}
 
-			// Read row group as table
-			table, err := arrowReader.ReadRowGroup(rg)
-			if err != nil {
-				continue
+			record := tableReader.Record()
+			record.Retain() // Keep alive for sending
+
+			select {
+			case out <- core.DecodedBatch{
+				Batch: record,
+				Index: batchIndex,
+			}:
+				batchIndex++
+			case <-ctx.Done():
+				record.Release()
+				return
 			}
-
-			// Convert table to record batches
-			tableReader := array.NewTableReader(table, int64(batchSize))
-			for tableReader.Next() {
-				select {
-				case <-ctx.Done():
-					tableReader.Release()
-					table.Release()
-					return
-				default:
-				}
-
-				record := tableReader.Record()
-				record.Retain() // Keep alive for sending
-
-				select {
-				case out <- core.DecodedBatch{
-					Batch: record,
-					Index: batchIndex,
-				}:
-					batchIndex++
-				case <-ctx.Done():
-					record.Release()
-					tableReader.Release()
-					table.Release()
-					return
-				}
-			}
-
-			tableReader.Release()
-			table.Release()
 		}
 
 		// Mark last batch

@@ -342,23 +342,14 @@ func (c *Compactor) copyFile(ctx context.Context, path string, sink *sinks.Parqu
 
 	var totalRows int64
 
-	for rg := 0; rg < reader.NumRowGroups(); rg++ {
-		select {
-		case <-ctx.Done():
-			return totalRows, ctx.Err()
-		default:
-		}
-
-		table, err := arrowReader.ReadRowGroup(rg)
-		if err != nil {
-			continue
-		}
-
-		// Write table rows
-		// Note: This is simplified - proper implementation would iterate record batches
-		totalRows += table.NumRows()
-		table.Release()
+	// Read entire table
+	table, err := arrowReader.ReadTable(ctx)
+	if err != nil {
+		return 0, err
 	}
+	defer table.Release()
+
+	totalRows = table.NumRows()
 
 	return totalRows, nil
 }

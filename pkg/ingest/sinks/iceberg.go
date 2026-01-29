@@ -10,7 +10,6 @@ import (
 
 	"github.com/apache/arrow/go/v14/arrow"
 	"github.com/apache/arrow/go/v14/parquet"
-	"github.com/apache/arrow/go/v14/parquet/compress"
 	"github.com/apache/arrow/go/v14/parquet/pqarrow"
 	"github.com/google/uuid"
 
@@ -156,12 +155,9 @@ func (s *IcebergSink) closeCurrentDataFile() error {
 		return nil
 	}
 
+	// Close writer (this also closes the underlying file)
 	if err := s.currentWriter.Close(); err != nil {
 		return fmt.Errorf("failed to close writer: %w", err)
-	}
-
-	if err := s.currentFile.Close(); err != nil {
-		return fmt.Errorf("failed to close file: %w", err)
 	}
 
 	// Get file size
