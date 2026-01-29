@@ -20,12 +20,23 @@ type Builder struct {
 
 	// Configuration
 	cfg BuilderConfig
+
+	// caseIDs maps case ID strings to sequential uint32 IDs for bitmap indexing.
+	caseIDs map[string]uint32
+	nextCaseID uint32
+
+	// objectIDs maps "type:id" strings to sequential uint32 IDs for bitmap indexing.
+	objectIDs map[string]uint32
+	nextObjectID uint32
 }
 
 type traceBuilder struct {
 	caseID     string
 	activities []string
 	timestamps []int64
+	// objects tracks OCEL object references per activity step.
+	// objects[i] contains the objects associated with the i-th activity.
+	objects [][]model.ObjectRef
 }
 
 // BuilderConfig configures the PMPT builder.
@@ -35,6 +46,9 @@ type BuilderConfig struct {
 
 	// IncludeTimestamps enables duration tracking
 	IncludeTimestamps bool
+
+	// IncludeObjects enables OCEL object tracking on nodes
+	IncludeObjects bool
 }
 
 // DefaultBuilderConfig returns sensible defaults.
@@ -42,6 +56,7 @@ func DefaultBuilderConfig() BuilderConfig {
 	return BuilderConfig{
 		MaxActiveTraces:   100000,
 		IncludeTimestamps: true,
+		IncludeObjects:    false,
 	}
 }
 
@@ -51,6 +66,8 @@ func NewBuilder(cfg BuilderConfig) *Builder {
 		activeTraces: make(map[string]*traceBuilder),
 		tree:         NewTree(),
 		cfg:          cfg,
+		caseIDs:      make(map[string]uint32),
+		objectIDs:    make(map[string]uint32),
 	}
 }
 
