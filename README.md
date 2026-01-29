@@ -9,12 +9,15 @@ CSV/XES/XLSX/JSON  ──>  Parquet  ──>  PM4Py / Celonis / ProM
 ## Features
 
 - **Multi-format Input**: CSV, XES, XLSX, JSON, JSONL, access logs (+ gzip compressed)
-- **High Performance**: 100K+ events/sec via DuckDB + Arrow columnar processing
+- **High Performance**: 150K+ events/sec via DuckDB + Arrow columnar processing
+- **Full Data Lineage**: Every Parquet file includes source file, ingest timestamp, schema version
+- **XES Process Mining**: Extracts ALL attributes (trace-level + event-level) with proper typing
 - **Interactive Wizard**: TUI for guided column mapping
 - **Data Contracts**: Generate `.contract.json` for schema validation
 - **Watch Mode**: Auto-convert on file changes (real-time pipelines)
 - **Semantic Diff**: Git-style comparison of process logs
 - **Data Quality**: Inspection, sampling, anonymization, BI exports
+- **50 Regression Tests**: Entropy checks, 100+ column tests, round-trip verification
 
 ## Quick Start
 
@@ -43,9 +46,105 @@ go install github.com/logflow/logflow/cmd/logflow@latest
 
 Or build from source:
 ```bash
-git clone https://github.com/logflow/logflow
-cd logflow
+git clone https://github.com/namanag97/logpro
+cd logpro
 go build -o logflow ./cmd/logflow
+```
+
+## Library Usage (Go API)
+
+Use LogFlow as a library for custom pipelines:
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+
+    "github.com/logflow/logflow/pkg/ingest"
+    "github.com/logflow/logflow/pkg/ingest/core"
+    "github.com/logflow/logflow/pkg/ingest/decoders"
+    "github.com/logflow/logflow/pkg/ingest/sinks"
+)
+
+func main() {
+    ctx := context.Background()
+
+    // Create streaming pipeline
+    pipeline := ingest.NewStreamingPipeline()
+
+    // Register hooks for data transformation
+    pipeline.Hooks().RegisterPostBatch(func(ctx context.Context, batch arrow.Record) (arrow.Record, error) {
+        // Transform, validate, or enrich data
+        return batch, nil
+    })
+
+    // Configure source
+    source := &FileSource{Path: "events.xes", Format: core.FormatXES}
+
+    // Configure sink with lineage metadata
+    sink := sinks.NewParquetSink()
+    sinkOpts := core.DefaultSinkOptions()
+    sinkOpts.Path = "events.parquet"
+    sinkOpts.Compression = core.CompressionZstd
+    sinkOpts.Metadata = map[string]string{
+        "source_file":   "events.xes",
+        "source_format": "xes",
+        "pipeline_id":   "etl_pipeline_001",
+    }
+
+    // Stream with options
+    opts := ingest.StreamingOptions{
+        BatchSize:    8192,
+        SchemaPolicy: schema.PolicyMergeNullable,
+        ErrorPolicy:  core.ErrorPolicySkip,
+        OnProgress: func(p hooks.Progress) {
+            fmt.Printf("\rProcessed %d rows...", p.RowsRead)
+        },
+    }
+
+    result, err := pipeline.Stream(ctx, source, sink, opts)
+    if err != nil {
+        panic(err)
+    }
+
+    fmt.Printf("\nDone: %d rows at %.0f rows/sec\n",
+        result.RowsProcessed, result.Throughput())
+}
+```
+
+### Available Decoders
+
+```go
+decoders.NewCSVDecoder()     // CSV, TSV
+decoders.NewJSONDecoder()    // JSON arrays, JSONL
+decoders.NewXESDecoder()     // IEEE 1849-2016 XES
+decoders.NewParquetDecoder() // Parquet files
+```
+
+### Available Sinks
+
+```go
+sinks.NewParquetSink()   // Apache Parquet
+sinks.NewIcebergSink()   // Apache Iceberg tables
+sinks.NewArrowIPCSink()  // Arrow IPC streaming
+```
+
+### Schema Policies
+
+```go
+schema.PolicyStrict        // Reject any schema changes
+schema.PolicyMergeNullable // Allow new nullable columns
+schema.PolicyEvolving      // Allow compatible type widening
+```
+
+### Error Policies
+
+```go
+core.ErrorPolicyStrict     // Fail on first error
+core.ErrorPolicySkip       // Skip bad rows, continue
+core.ErrorPolicyQuarantine // Write bad rows to separate file
 ```
 
 ## Commands
@@ -293,14 +392,60 @@ Top Activities:
   3. Process Payment (32,891)
 ```
 
+## Data Lineage Metadata
+
+Every Parquet file includes audit/lineage metadata in the Arrow schema:
+
+```python
+import pyarrow.parquet as pq
+
+table = pq.read_table("output.parquet")
+print(table.schema.metadata)
+
+# {
+#   b'logflow.version': b'1.0.0',
+#   b'logflow.created_at': b'2024-01-15T10:30:00Z',
+#   b'logflow.schema_fields': b'25',
+#   b'logflow.source_file': b'/data/events.csv',
+#   b'logflow.source_format': b'csv',
+#   b'logflow.user.pipeline_id': b'etl_v2',
+# }
+```
+
+Add custom metadata:
+```bash
+logflow convert -i data.csv -o data.parquet \
+  --metadata "pipeline=production" \
+  --metadata "run_id=12345"
+```
+
+## XES Process Mining Support
+
+The XES decoder captures ALL data from IEEE 1849-2016 event logs:
+
+| Column | Source | Description |
+|--------|--------|-------------|
+| `case_id` | trace concept:name | Process instance ID |
+| `activity` | event concept:name | Activity performed |
+| `timestamp` | time:timestamp | When activity occurred |
+| `resource` | org:resource | Who performed it |
+| `lifecycle` | lifecycle:transition | Event lifecycle state |
+| `trace_*` | trace attributes | Case-level attributes (e.g., `trace_AMOUNT_REQ`, `trace_REG_DATE`) |
+| `*` | event attributes | Custom event attributes (int, float, boolean, date, string) |
+| `_source_file` | lineage | Original XES file path |
+| `_ingest_timestamp` | lineage | When data was ingested |
+| `_event_index` | lineage | Row number in source |
+
 ## Performance
 
-| Dataset | Rows | CSV Size | Parquet Size | Time (Arrow) | Time (DuckDB) |
-|---------|------|----------|--------------|--------------|---------------|
-| BPI 2017 | 1.2M | 145 MB | 13.6 MB | 2.1s | 0.8s |
-| Insurance | 156K | 32.5 MB | 2.97 MB | 0.4s | 0.2s |
+| Dataset | Size | Events | Throughput | Output Size |
+|---------|------|--------|------------|-------------|
+| BPI Challenge 2017 | 552 MB | 1.2M | 152K events/sec | 28 MB |
+| BPI Challenge 2018 | 1.9 GB | 2.5M | 128K events/sec | 53 MB |
+| BPI Challenge 2019 | 695 MB | 1.6M | 232K events/sec | 11 MB |
+| Insurance Claims | 32 MB | 180K | 200K+ events/sec | 3 MB |
 
-Typical compression ratio: **10x**
+Typical compression ratio: **10-20x**
 
 ## Architecture
 
