@@ -21,17 +21,19 @@ import (
 const logflowVersion = "1.0.0"
 
 // ParquetSink writes Arrow batches to Parquet files.
+// Uses atomic writes (write to temp file, rename on success) to prevent corruption.
 type ParquetSink struct {
 	mu sync.Mutex
 
-	path        string
-	schema      *arrow.Schema
-	opts        core.SinkOptions
-	writer      *pqarrow.FileWriter
-	file        *os.File
-	rowsWritten int64
-	startTime   time.Time
-	sourceFile  string // Original source file path
+	path         string
+	tempPath     string // Temp file path for atomic writes
+	schema       *arrow.Schema
+	opts         core.SinkOptions
+	writer       *pqarrow.FileWriter
+	file         *os.File
+	rowsWritten  int64
+	startTime    time.Time
+	sourceFile   string // Original source file path
 	sourceFormat string // Original format (csv, json, xes, etc.)
 }
 
@@ -92,10 +94,11 @@ func (s *ParquetSink) Open(ctx context.Context, schema *arrow.Schema, opts core.
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
 
-	// Open file
-	file, err := os.Create(s.path)
+	// ATOMIC WRITE: Create temp file, rename on successful close
+	s.tempPath = s.path + ".tmp." + fmt.Sprintf("%d", time.Now().UnixNano())
+	file, err := os.Create(s.tempPath)
 	if err != nil {
-		return fmt.Errorf("failed to create file: %w", err)
+		return fmt.Errorf("failed to create temp file: %w", err)
 	}
 	s.file = file
 
@@ -145,6 +148,7 @@ func (s *ParquetSink) Flush(ctx context.Context) error {
 }
 
 // Close finalizes and closes the sink.
+// Uses atomic rename: temp file is renamed to final path only on success.
 func (s *ParquetSink) Close(ctx context.Context) (*core.SinkResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -155,10 +159,19 @@ func (s *ParquetSink) Close(ctx context.Context) (*core.SinkResult, error) {
 
 	// Close writer (this also closes the underlying file)
 	if err := s.writer.Close(); err != nil {
+		// ATOMIC WRITE: Clean up temp file on failure
+		os.Remove(s.tempPath)
 		return nil, fmt.Errorf("failed to close writer: %w", err)
 	}
 	s.writer = nil
 	s.file = nil
+
+	// ATOMIC WRITE: Rename temp file to final path
+	if err := os.Rename(s.tempPath, s.path); err != nil {
+		// Clean up temp file on rename failure
+		os.Remove(s.tempPath)
+		return nil, fmt.Errorf("failed to rename temp file to final path: %w", err)
+	}
 
 	// Get file size
 	info, _ := os.Stat(s.path)
@@ -174,6 +187,25 @@ func (s *ParquetSink) Close(ctx context.Context) (*core.SinkResult, error) {
 		FilesWritten: 1,
 		Duration:     time.Since(s.startTime),
 	}, nil
+}
+
+// Abort cancels the write and cleans up the temp file.
+func (s *ParquetSink) Abort() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.writer != nil {
+		s.writer.Close()
+		s.writer = nil
+	}
+	if s.file != nil {
+		s.file.Close()
+		s.file = nil
+	}
+	if s.tempPath != "" {
+		os.Remove(s.tempPath)
+	}
+	return nil
 }
 
 // getCompression converts compression enum to Parquet codec.

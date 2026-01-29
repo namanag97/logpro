@@ -75,9 +75,17 @@ func (d *CSVDecoder) Decode(ctx context.Context, source core.Source, opts core.D
 
 		bufReader := bufio.NewReaderSize(reader, 256*1024)
 
-		// Skip header line
+		// Skip header line (line 1)
 		_, err := d.readLine(bufReader, '"')
 		if err != nil {
+			// BUG FIX: Don't silently fail on header read error
+			out <- core.DecodedBatch{
+				Errors: []core.RowError{{
+					RowNumber: 1,
+					Error:     fmt.Errorf("failed to read CSV header: %w", err),
+				}},
+				IsFinal: true,
+			}
 			return
 		}
 
@@ -87,12 +95,22 @@ func (d *CSVDecoder) Decode(ctx context.Context, source core.Source, opts core.D
 		}
 
 		builders := d.createBuilders(schema)
-		defer d.releaseBuilders(builders)
+		// BUG FIX: Track current builders for proper cleanup
+		currentBuilders := builders
+
+		// Ensure builders are always released on exit
+		defer func() {
+			if currentBuilders != nil {
+				d.releaseBuilders(currentBuilders)
+			}
+		}()
 
 		var rowCount int64
 		var batchIndex int
+		var batchStartLine int64 = 2 // First data row is line 2 (after header)
 		var errors []core.RowError
-		lineNum := int64(1)
+		// BUG FIX: Line numbers - header is line 1, first data row is line 2
+		lineNum := int64(1) // Will be incremented to 2 before first data row
 
 		for {
 			select {
@@ -105,6 +123,9 @@ func (d *CSVDecoder) Decode(ctx context.Context, source core.Source, opts core.D
 			if err == io.EOF {
 				break
 			}
+
+			lineNum++ // Increment BEFORE processing so first data row = line 2
+
 			if err != nil {
 				errors = append(errors, core.RowError{
 					RowNumber: lineNum,
@@ -116,7 +137,6 @@ func (d *CSVDecoder) Decode(ctx context.Context, source core.Source, opts core.D
 				continue
 			}
 
-			lineNum++
 			fields := d.parseFields(line, delimiter, '"')
 
 			// Append to builders
@@ -138,7 +158,7 @@ func (d *CSVDecoder) Decode(ctx context.Context, source core.Source, opts core.D
 				case out <- core.DecodedBatch{
 					Batch:     batch,
 					Index:     batchIndex,
-					RowOffset: lineNum - int64(batchSize),
+					RowOffset: batchStartLine, // BUG FIX: Use tracked start line
 					Errors:    errors,
 				}:
 				case <-ctx.Done():
@@ -146,8 +166,12 @@ func (d *CSVDecoder) Decode(ctx context.Context, source core.Source, opts core.D
 					return
 				}
 				batchIndex++
+				batchStartLine = lineNum + 1 // Next batch starts after current line
 				errors = nil
+				// BUG FIX: Release old builders before creating new ones
+				d.releaseBuilders(builders)
 				builders = d.createBuilders(schema)
+				currentBuilders = builders
 			}
 		}
 
@@ -156,15 +180,18 @@ func (d *CSVDecoder) Decode(ctx context.Context, source core.Source, opts core.D
 			batch := d.flushBuilders(schema, builders)
 			select {
 			case out <- core.DecodedBatch{
-				Batch:   batch,
-				Index:   batchIndex,
-				Errors:  errors,
-				IsFinal: true,
+				Batch:     batch,
+				Index:     batchIndex,
+				RowOffset: batchStartLine,
+				Errors:    errors,
+				IsFinal:   true,
 			}:
 			case <-ctx.Done():
 				batch.Release()
 			}
 		}
+		// Mark as nil so defer doesn't double-release
+		currentBuilders = nil
 	}()
 
 	return out, nil
