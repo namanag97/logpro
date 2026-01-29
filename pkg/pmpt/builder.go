@@ -125,17 +125,59 @@ func (b *Builder) flushTrace(tb *traceBuilder) {
 		return
 	}
 
-	trace := Trace{
-		CaseID:     tb.caseID,
-		Activities: tb.activities,
-		Timestamps: tb.timestamps,
+	// Assign sequential case ID for bitmap indexing
+	caseSeqID, hasCaseID := b.caseIDs[tb.caseID]
+	if !hasCaseID {
+		caseSeqID = b.nextCaseID
+		b.caseIDs[tb.caseID] = caseSeqID
+		b.nextCaseID++
 	}
 
-	// Note: tree.AddTrace acquires its own lock, but we already hold b.mu
-	// So we temporarily unlock
-	b.mu.Unlock()
-	b.tree.AddTrace(trace)
-	b.mu.Lock()
+	if b.cfg.IncludeObjects && len(tb.objects) > 0 {
+		// Object-aware path: register object IDs and flush with bitmaps
+		objRefs := make([][]ObjectRef, len(tb.objects))
+		for i, refs := range tb.objects {
+			if refs == nil {
+				continue
+			}
+			converted := make([]ObjectRef, len(refs))
+			for j, r := range refs {
+				oid := string(r.ObjectID)
+				otype := string(r.ObjectType)
+				key := otype + ":" + oid
+				if _, ok := b.objectIDs[key]; !ok {
+					b.objectIDs[key] = b.nextObjectID
+					b.nextObjectID++
+				}
+				converted[j] = ObjectRef{ObjectID: oid, ObjectType: otype}
+			}
+			objRefs[i] = converted
+		}
+
+		ot := ObjectTrace{
+			Trace: Trace{
+				CaseID:     tb.caseID,
+				Activities: tb.activities,
+				Timestamps: tb.timestamps,
+			},
+			Objects: objRefs,
+		}
+
+		// Temporarily unlock for tree operations
+		b.mu.Unlock()
+		b.tree.AddTraceWithObjects(ot, caseSeqID, b.objectIDs)
+		b.mu.Lock()
+	} else {
+		trace := Trace{
+			CaseID:     tb.caseID,
+			Activities: tb.activities,
+			Timestamps: tb.timestamps,
+		}
+
+		b.mu.Unlock()
+		b.tree.AddTrace(trace)
+		b.mu.Lock()
+	}
 }
 
 // FlushAll finalizes all active traces and returns the completed tree.
@@ -144,14 +186,7 @@ func (b *Builder) FlushAll() *Tree {
 	defer b.mu.Unlock()
 
 	for _, tb := range b.activeTraces {
-		// Temporarily unlock for tree operations
-		b.mu.Unlock()
-		b.tree.AddTrace(Trace{
-			CaseID:     tb.caseID,
-			Activities: tb.activities,
-			Timestamps: tb.timestamps,
-		})
-		b.mu.Lock()
+		b.flushTrace(tb)
 	}
 
 	b.activeTraces = make(map[string]*traceBuilder)
