@@ -76,9 +76,41 @@ func (s *ParquetSink) Open(ctx context.Context, schema *arrow.Schema, opts core.
 		metaKeys = append(metaKeys, "logflow.source_format")
 		metaValues = append(metaValues, s.sourceFormat)
 	}
+
+	// OCEL 2.0 metadata: attribute names, object types, relationships
+	ocelAttrs := make([]string, 0, schema.NumFields())
+	var ocelObjectTypes []string
+	hasOCELObjects := false
+	for _, f := range schema.Fields() {
+		ocelAttrs = append(ocelAttrs, f.Name)
+		if f.Name == "ocel_objects" {
+			hasOCELObjects = true
+		}
+	}
+	metaKeys = append(metaKeys, "ocel:attributes")
+	metaValues = append(metaValues, strings.Join(ocelAttrs, ","))
+
+	if hasOCELObjects {
+		// Extract object types from user metadata if provided
+		if ot, ok := opts.Metadata["ocel_object_types"]; ok {
+			ocelObjectTypes = strings.Split(ot, ",")
+		}
+		metaKeys = append(metaKeys, "ocel:object_types")
+		metaValues = append(metaValues, strings.Join(ocelObjectTypes, ","))
+
+		// Relationships placeholder for downstream enrichment
+		ocelRels := ""
+		if r, ok := opts.Metadata["ocel_relationships"]; ok {
+			ocelRels = r
+		}
+		metaKeys = append(metaKeys, "ocel:relationships")
+		metaValues = append(metaValues, ocelRels)
+	}
+
 	// Add user-provided metadata
 	for k, v := range opts.Metadata {
-		if k != "source_file" && k != "source_format" {
+		if k != "source_file" && k != "source_format" &&
+			k != "ocel_object_types" && k != "ocel_relationships" {
 			metaKeys = append(metaKeys, "logflow.user."+k)
 			metaValues = append(metaValues, v)
 		}
