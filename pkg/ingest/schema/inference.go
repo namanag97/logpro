@@ -145,6 +145,15 @@ func inferGoType(value interface{}) arrow.Type {
 
 func selectBestType(types map[arrow.Type]int) arrow.DataType {
 	// Priority: more specific types win
+	if types[arrow.LIST] > 0 {
+		// Default list element type is string; callers needing a specific
+		// element type should refine via InferListType.
+		return arrow.ListOf(arrow.BinaryTypes.String)
+	}
+	if types[arrow.STRUCT] > 0 {
+		// Bare struct without known fields; callers should refine.
+		return arrow.StructOf()
+	}
 	if types[arrow.FLOAT64] > 0 {
 		return arrow.PrimitiveTypes.Float64
 	}
