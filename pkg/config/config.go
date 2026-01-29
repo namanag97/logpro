@@ -39,6 +39,25 @@ type ConversionConfig struct {
 	Compression  string `yaml:"compression"`    // snappy | zstd | gzip | lz4 | none
 	RowGroupSize string `yaml:"row_group_size"` // e.g., "128MB"
 	BatchSize    int    `yaml:"batch_size"`
+
+	// Schema handling
+	SchemaPolicy string `yaml:"schema_policy"` // strict | merge_nullable | evolving
+	SchemaSample int    `yaml:"schema_sample"` // rows to sample for inference
+	SchemaCache  bool   `yaml:"schema_cache"`  // cache inferred schemas
+
+	// Error handling
+	ErrorPolicy string `yaml:"error_policy"` // strict | skip | quarantine
+	MaxErrors   int    `yaml:"max_errors"`   // max errors before abort (0 = unlimited)
+
+	// Rate limiting
+	MaxBytesPerSec int64 `yaml:"max_bytes_per_sec"` // 0 = unlimited
+	MaxFilesPerSec int64 `yaml:"max_files_per_sec"` // 0 = unlimited
+
+	// Concurrency
+	MaxConcurrentFiles  int `yaml:"max_concurrent_files"`
+	MaxConcurrentCheap  int `yaml:"max_concurrent_cheap"`
+	MaxConcurrentMedium int `yaml:"max_concurrent_medium"`
+	MaxConcurrentHeavy  int `yaml:"max_concurrent_heavy"`
 }
 
 // PluginsConfig controls plugin behavior.
@@ -100,9 +119,18 @@ func Default() *Config {
 			TempDir:     filepath.Join(os.TempDir(), "logflow"),
 		},
 		Conversion: ConversionConfig{
-			Compression:  "snappy",
-			RowGroupSize: "128MB",
-			BatchSize:    8192,
+			Compression:         "snappy",
+			RowGroupSize:        "128MB",
+			BatchSize:           8192,
+			SchemaPolicy:        "merge_nullable",
+			SchemaSample:        10000,
+			SchemaCache:         true,
+			ErrorPolicy:         "skip",
+			MaxErrors:           1000,
+			MaxConcurrentFiles:  10,
+			MaxConcurrentCheap:  8,
+			MaxConcurrentMedium: 4,
+			MaxConcurrentHeavy:  2,
 		},
 		Plugins: PluginsConfig{
 			Quality: QualityPluginConfig{

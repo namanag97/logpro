@@ -6,8 +6,8 @@ import (
 	"time"
 )
 
-// RateLimiter limits throughput by bytes or files per second.
-type RateLimiter struct {
+// ThroughputLimiter limits throughput by bytes or files per second.
+type ThroughputLimiter struct {
 	mu sync.Mutex
 
 	// Limits
@@ -23,9 +23,9 @@ type RateLimiter struct {
 	lastAcquire time.Time
 }
 
-// NewRateLimiter creates a rate limiter.
-func NewRateLimiter(maxBytesPerSec, maxFilesPerSec int64) *RateLimiter {
-	return &RateLimiter{
+// NewThroughputLimiter creates a throughput limiter.
+func NewThroughputLimiter(maxBytesPerSec, maxFilesPerSec int64) *ThroughputLimiter {
+	return &ThroughputLimiter{
 		maxBytesPerSec: maxBytesPerSec,
 		maxFilesPerSec: maxFilesPerSec,
 		lastAcquire:    time.Now(),
@@ -33,7 +33,7 @@ func NewRateLimiter(maxBytesPerSec, maxFilesPerSec int64) *RateLimiter {
 }
 
 // AcquireBytes waits until bytes can be processed.
-func (r *RateLimiter) AcquireBytes(ctx context.Context, bytes int64) error {
+func (r *ThroughputLimiter) AcquireBytes(ctx context.Context, bytes int64) error {
 	if r.maxBytesPerSec <= 0 {
 		return nil // No limit
 	}
@@ -70,7 +70,7 @@ func (r *RateLimiter) AcquireBytes(ctx context.Context, bytes int64) error {
 }
 
 // AcquireFile waits until a file can be processed.
-func (r *RateLimiter) AcquireFile(ctx context.Context) error {
+func (r *ThroughputLimiter) AcquireFile(ctx context.Context) error {
 	if r.maxFilesPerSec <= 0 {
 		return nil // No limit
 	}
