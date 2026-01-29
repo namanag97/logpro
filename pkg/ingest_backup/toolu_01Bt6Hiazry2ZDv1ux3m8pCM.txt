@@ -1,0 +1,798 @@
+     1→// Package ingest provides a high-performance, robust data ingestion pipeline.
+     2→// It uses heuristics to choose between fast DuckDB native paths and robust Go streaming.
+     3→package ingest
+     4→
+     5→import (
+     6→	"bytes"
+     7→	"io"
+     8→	"math"
+     9→	"os"
+    10→	"unicode/utf8"
+    11→)
+    12→
+    13→// SampleSize is the number of bytes to read for heuristic analysis.
+    14→const SampleSize = 64 * 1024 // 64KB
+    15→
+    16→// FileAnalysis contains detected characteristics of a file.
+    17→type FileAnalysis struct {
+    18→	// Basic info
+    19→	Size     int64
+    20→	Format   Format
+    21→	Encoding Encoding
+    22→
+    23→	// CSV-specific
+    24→	Delimiter       byte
+    25→	QuoteChar       byte
+    26→	HasHeader       bool
+    27→	EstimatedCols   int
+    28→	LineEnding      LineEnding
+    29→	HasQuotedFields bool
+    30→
+    31→	// Quality indicators
+    32→	IsClean              bool
+    33→	HasEmbeddedNewlines  bool
+    34→	HasEncodingErrors    bool
+    35→	HasRaggedRows        bool
+    36→	HasMalformedQuotes   bool
+    37→	NullValueStrings     []string
+    38→
+    39→	// Strategy recommendation
+    40→	RecommendedStrategy Strategy
+    41→	Confidence          float64
+    42→}
+    43→
+    44→// Format represents detected file format.
+    45→type Format uint8
+    46→
+    47→const (
+    48→	FormatUnknown Format = iota
+    49→	FormatCSV
+    50→	FormatTSV
+    51→	FormatJSON
+    52→	FormatJSONL
+    53→	FormatXES
+    54→	FormatXML
+    55→	FormatXLSX
+    56→	FormatParquet
+    57→	FormatGzip
+    58→)
+    59→
+    60→func (f Format) String() string {
+    61→	switch f {
+    62→	case FormatCSV:
+    63→		return "csv"
+    64→	case FormatTSV:
+    65→		return "tsv"
+    66→	case FormatJSON:
+    67→		return "json"
+    68→	case FormatJSONL:
+    69→		return "jsonl"
+    70→	case FormatXES:
+    71→		return "xes"
+    72→	case FormatXML:
+    73→		return "xml"
+    74→	case FormatXLSX:
+    75→		return "xlsx"
+    76→	case FormatParquet:
+    77→		return "parquet"
+    78→	case FormatGzip:
+    79→		return "gzip"
+    80→	default:
+    81→		return "unknown"
+    82→	}
+    83→}
+    84→
+    85→// Encoding represents detected character encoding.
+    86→type Encoding uint8
+    87→
+    88→const (
+    89→	EncodingUnknown Encoding = iota
+    90→	EncodingUTF8
+    91→	EncodingUTF8BOM
+    92→	EncodingUTF16LE
+    93→	EncodingUTF16BE
+    94→	EncodingLatin1
+    95→	EncodingASCII
+    96→)
+    97→
+    98→func (e Encoding) String() string {
+    99→	switch e {
+   100→	case EncodingUTF8:
+   101→		return "utf-8"
+   102→	case EncodingUTF8BOM:
+   103→		return "utf-8-bom"
+   104→	case EncodingUTF16LE:
+   105→		return "utf-16-le"
+   106→	case EncodingUTF16BE:
+   107→		return "utf-16-be"
+   108→	case EncodingLatin1:
+   109→		return "latin-1"
+   110→	case EncodingASCII:
+   111→		return "ascii"
+   112→	default:
+   113→		return "unknown"
+   114→	}
+   115→}
+   116→
+   117→// LineEnding represents detected line ending style.
+   118→type LineEnding uint8
+   119→
+   120→const (
+   121→	LineEndingUnknown LineEnding = iota
+   122→	LineEndingLF               // Unix \n
+   123→	LineEndingCRLF             // Windows \r\n
+   124→	LineEndingCR               // Old Mac \r
+   125→	LineEndingMixed            // Mixed (problematic)
+   126→)
+   127→
+   128→// Strategy represents the recommended processing strategy.
+   129→type Strategy uint8
+   130→
+   131→const (
+   132→	StrategyFastDuckDB  Strategy = iota // Use DuckDB native readers
+   133→	StrategyRobustGo                    // Use Go streaming with error recovery
+   134→	StrategyStreaming                   // Use chunked streaming for large files
+   135→	StrategyHybrid                      // DuckDB for read, Go for validation
+   136→)
+   137→
+   138→func (s Strategy) String() string {
+   139→	switch s {
+   140→	case StrategyFastDuckDB:
+   141→		return "fast-duckdb"
+   142→	case StrategyRobustGo:
+   143→		return "robust-go"
+   144→	case StrategyStreaming:
+   145→		return "streaming"
+   146→	case StrategyHybrid:
+   147→		return "hybrid"
+   148→	default:
+   149→		return "unknown"
+   150→	}
+   151→}
+   152→
+   153→// Detector analyzes files to determine optimal processing strategy.
+   154→type Detector struct {
+   155→	maxSampleSize int64
+   156→}
+   157→
+   158→// NewDetector creates a new file analyzer.
+   159→func NewDetector() *Detector {
+   160→	return &Detector{
+   161→		maxSampleSize: SampleSize,
+   162→	}
+   163→}
+   164→
+   165→// Analyze examines a file and returns analysis with recommended strategy.
+   166→func (d *Detector) Analyze(path string) (*FileAnalysis, error) {
+   167→	f, err := os.Open(path)
+   168→	if err != nil {
+   169→		return nil, err
+   170→	}
+   171→	defer f.Close()
+   172→
+   173→	info, err := f.Stat()
+   174→	if err != nil {
+   175→		return nil, err
+   176→	}
+   177→
+   178→	// Read sample
+   179→	sampleSize := d.maxSampleSize
+   180→	if info.Size() < sampleSize {
+   181→		sampleSize = info.Size()
+   182→	}
+   183→
+   184→	sample := make([]byte, sampleSize)
+   185→	n, err := f.Read(sample)
+   186→	if err != nil && err != io.EOF {
+   187→		return nil, err
+   188→	}
+   189→	sample = sample[:n]
+   190→
+   191→	analysis := &FileAnalysis{
+   192→		Size: info.Size(),
+   193→	}
+   194→
+   195→	// Detect encoding first (affects all subsequent analysis)
+   196→	analysis.Encoding = d.detectEncoding(sample)
+   197→
+   198→	// Detect format based on content and extension
+   199→	analysis.Format = d.detectFormat(path, sample)
+   200→
+   201→	// Format-specific analysis
+   202→	switch analysis.Format {
+   203→	case FormatCSV, FormatTSV:
+   204→		d.analyzeCSV(sample, analysis)
+   205→	case FormatJSON, FormatJSONL:
+   206→		d.analyzeJSON(sample, analysis)
+   207→	case FormatXES, FormatXML:
+   208→		d.analyzeXML(sample, analysis)
+   209→	}
+   210→
+   211→	// Determine cleanliness
+   212→	analysis.IsClean = !analysis.HasEncodingErrors &&
+   213→		!analysis.HasMalformedQuotes &&
+   214→		!analysis.HasRaggedRows &&
+   215→		!analysis.HasEmbeddedNewlines
+   216→
+   217→	// Select strategy
+   218→	analysis.RecommendedStrategy, analysis.Confidence = d.selectStrategy(analysis)
+   219→
+   220→	return analysis, nil
+   221→}
+   222→
+   223→// detectEncoding identifies the character encoding.
+   224→func (d *Detector) detectEncoding(sample []byte) Encoding {
+   225→	if len(sample) == 0 {
+   226→		return EncodingUnknown
+   227→	}
+   228→
+   229→	// Check for BOM (Byte Order Mark)
+   230→	if len(sample) >= 3 && sample[0] == 0xEF && sample[1] == 0xBB && sample[2] == 0xBF {
+   231→		return EncodingUTF8BOM
+   232→	}
+   233→	if len(sample) >= 2 {
+   234→		if sample[0] == 0xFF && sample[1] == 0xFE {
+   235→			return EncodingUTF16LE
+   236→		}
+   237→		if sample[0] == 0xFE && sample[1] == 0xFF {
+   238→			return EncodingUTF16BE
+   239→		}
+   240→	}
+   241→
+   242→	// Check if valid UTF-8
+   243→	if utf8.Valid(sample) {
+   244→		// Check if pure ASCII
+   245→		isASCII := true
+   246→		for _, b := range sample {
+   247→			if b > 127 {
+   248→				isASCII = false
+   249→				break
+   250→			}
+   251→		}
+   252→		if isASCII {
+   253→			return EncodingASCII
+   254→		}
+   255→		return EncodingUTF8
+   256→	}
+   257→
+   258→	// Likely Latin-1 or another 8-bit encoding
+   259→	return EncodingLatin1
+   260→}
+   261→
+   262→// detectFormat identifies the file format.
+   263→func (d *Detector) detectFormat(path string, sample []byte) Format {
+   264→	// Check magic bytes first
+   265→	if len(sample) >= 4 {
+   266→		// Parquet magic: PAR1
+   267→		if bytes.HasPrefix(sample, []byte("PAR1")) {
+   268→			return FormatParquet
+   269→		}
+   270→		// Gzip magic: 1f 8b
+   271→		if sample[0] == 0x1f && sample[1] == 0x8b {
+   272→			return FormatGzip
+   273→		}
+   274→		// XLSX magic: PK (zip archive)
+   275→		if sample[0] == 0x50 && sample[1] == 0x4B {
+   276→			return FormatXLSX
+   277→		}
+   278→	}
+   279→
+   280→	// Skip BOM if present
+   281→	content := sample
+   282→	if len(content) >= 3 && content[0] == 0xEF && content[1] == 0xBB && content[2] == 0xBF {
+   283→		content = content[3:]
+   284→	}
+   285→
+   286→	// Skip leading whitespace
+   287→	content = bytes.TrimLeft(content, " \t\r\n")
+   288→
+   289→	// Check for XML/XES
+   290→	if bytes.HasPrefix(content, []byte("<?xml")) || bytes.HasPrefix(content, []byte("<log")) {
+   291→		if bytes.Contains(sample, []byte("<trace")) || bytes.Contains(sample, []byte("xes.")) {
+   292→			return FormatXES
+   293→		}
+   294→		return FormatXML
+   295→	}
+   296→
+   297→	// Check for JSON
+   298→	if len(content) > 0 && (content[0] == '{' || content[0] == '[') {
+   299→		// Check if it's JSONL (multiple JSON objects per line)
+   300→		if d.isJSONL(content) {
+   301→			return FormatJSONL
+   302→		}
+   303→		return FormatJSON
+   304→	}
+   305→
+   306→	// Default to CSV/TSV based on content analysis
+   307→	tabCount := bytes.Count(sample, []byte("\t"))
+   308→	commaCount := bytes.Count(sample, []byte(","))
+   309→
+   310→	if tabCount > commaCount && tabCount > 0 {
+   311→		return FormatTSV
+   312→	}
+   313→	return FormatCSV
+   314→}
+   315→
+   316→// isJSONL checks if content appears to be JSONL (one JSON object per line).
+   317→func (d *Detector) isJSONL(sample []byte) bool {
+   318→	lines := bytes.Split(sample, []byte("\n"))
+   319→	if len(lines) < 2 {
+   320→		return false
+   321→	}
+   322→
+   323→	jsonObjects := 0
+   324→	for i, line := range lines {
+   325→		if i >= 5 { // Check first 5 lines
+   326→			break
+   327→		}
+   328→		line = bytes.TrimSpace(line)
+   329→		if len(line) == 0 {
+   330→			continue
+   331→		}
+   332→		if line[0] == '{' && line[len(line)-1] == '}' {
+   333→			jsonObjects++
+   334→		}
+   335→	}
+   336→
+   337→	return jsonObjects >= 2
+   338→}
+   339→
+   340→// analyzeCSV performs detailed CSV analysis.
+   341→func (d *Detector) analyzeCSV(sample []byte, analysis *FileAnalysis) {
+   342→	// Detect delimiter using frequency analysis
+   343→	analysis.Delimiter = d.detectDelimiter(sample)
+   344→
+   345→	// Set format based on delimiter
+   346→	if analysis.Delimiter == '\t' {
+   347→		analysis.Format = FormatTSV
+   348→	}
+   349→
+   350→	// Detect quote character
+   351→	analysis.QuoteChar = d.detectQuoteChar(sample)
+   352→
+   353→	// Detect line ending
+   354→	analysis.LineEnding = d.detectLineEnding(sample)
+   355→
+   356→	// Count columns from first line
+   357→	analysis.EstimatedCols = d.countColumns(sample, analysis.Delimiter, analysis.QuoteChar)
+   358→
+   359→	// Detect header
+   360→	analysis.HasHeader = d.detectHeader(sample, analysis.Delimiter, analysis.QuoteChar)
+   361→
+   362→	// Check for quoted fields
+   363→	analysis.HasQuotedFields = bytes.IndexByte(sample, analysis.QuoteChar) >= 0
+   364→
+   365→	// Check for embedded newlines (in quoted fields)
+   366→	analysis.HasEmbeddedNewlines = d.hasEmbeddedNewlines(sample, analysis.QuoteChar)
+   367→
+   368→	// Check for malformed quotes
+   369→	analysis.HasMalformedQuotes = d.hasMalformedQuotes(sample, analysis.QuoteChar)
+   370→
+   371→	// Check for ragged rows
+   372→	analysis.HasRaggedRows = d.hasRaggedRows(sample, analysis.Delimiter, analysis.QuoteChar, analysis.EstimatedCols)
+   373→
+   374→	// Check for encoding errors
+   375→	analysis.HasEncodingErrors = !utf8.Valid(sample)
+   376→
+   377→	// Detect null value representations
+   378→	analysis.NullValueStrings = d.detectNullValues(sample, analysis.Delimiter)
+   379→}
+   380→
+   381→// detectDelimiter uses character frequency analysis to find the delimiter.
+   382→func (d *Detector) detectDelimiter(sample []byte) byte {
+   383→	candidates := []byte{',', '\t', ';', '|', ':'}
+   384→	type delimStats struct {
+   385→		char     byte
+   386→		counts   []int
+   387→		variance float64
+   388→	}
+   389→
+   390→	stats := make([]delimStats, len(candidates))
+   391→
+   392→	for i, delim := range candidates {
+   393→		stats[i].char = delim
+   394→		stats[i].counts = d.countDelimiterPerLine(sample, delim)
+   395→
+   396→		// Calculate variance (lower is better - consistent count per line)
+   397→		if len(stats[i].counts) > 1 {
+   398→			stats[i].variance = variance(stats[i].counts)
+   399→		} else {
+   400→			stats[i].variance = math.MaxFloat64
+   401→		}
+   402→	}
+   403→
+   404→	// Find delimiter with lowest variance and reasonable frequency
+   405→	bestDelim := byte(',')
+   406→	bestScore := math.MaxFloat64
+   407→
+   408→	for _, s := range stats {
+   409→		if len(s.counts) == 0 {
+   410→			continue
+   411→		}
+   412→
+   413→		// Calculate average count
+   414→		avg := mean(s.counts)
+   415→		if avg < 1 {
+   416→			continue // Need at least one delimiter per line
+   417→		}
+   418→
+   419→		// Score: prefer low variance and high frequency
+   420→		score := s.variance / avg
+   421→		if score < bestScore {
+   422→			bestScore = score
+   423→			bestDelim = s.char
+   424→		}
+   425→	}
+   426→
+   427→	return bestDelim
+   428→}
+   429→
+   430→// countDelimiterPerLine counts delimiter occurrences per line.
+   431→func (d *Detector) countDelimiterPerLine(sample []byte, delim byte) []int {
+   432→	var counts []int
+   433→	inQuote := false
+   434→	count := 0
+   435→
+   436→	for _, b := range sample {
+   437→		if b == '"' {
+   438→			inQuote = !inQuote
+   439→			continue
+   440→		}
+   441→		if !inQuote {
+   442→			if b == delim {
+   443→				count++
+   444→			} else if b == '\n' {
+   445→				counts = append(counts, count)
+   446→				count = 0
+   447→			}
+   448→		}
+   449→	}
+   450→
+   451→	return counts
+   452→}
+   453→
+   454→// detectQuoteChar finds the quote character used.
+   455→func (d *Detector) detectQuoteChar(sample []byte) byte {
+   456→	doubleQuotes := bytes.Count(sample, []byte(`"`))
+   457→	singleQuotes := bytes.Count(sample, []byte(`'`))
+   458→
+   459→	if doubleQuotes >= singleQuotes {
+   460→		return '"'
+   461→	}
+   462→	return '\''
+   463→}
+   464→
+   465→// detectLineEnding identifies the line ending style.
+   466→func (d *Detector) detectLineEnding(sample []byte) LineEnding {
+   467→	crlfCount := bytes.Count(sample, []byte("\r\n"))
+   468→	lfCount := bytes.Count(sample, []byte("\n")) - crlfCount
+   469→	crCount := bytes.Count(sample, []byte("\r")) - crlfCount
+   470→
+   471→	if crlfCount > 0 && lfCount == 0 && crCount == 0 {
+   472→		return LineEndingCRLF
+   473→	}
+   474→	if lfCount > 0 && crlfCount == 0 && crCount == 0 {
+   475→		return LineEndingLF
+   476→	}
+   477→	if crCount > 0 && crlfCount == 0 && lfCount == 0 {
+   478→		return LineEndingCR
+   479→	}
+   480→	if crlfCount > 0 || lfCount > 0 || crCount > 0 {
+   481→		return LineEndingMixed
+   482→	}
+   483→	return LineEndingUnknown
+   484→}
+   485→
+   486→// countColumns counts the number of columns in the first line.
+   487→func (d *Detector) countColumns(sample []byte, delim, quote byte) int {
+   488→	// Find first line
+   489→	lineEnd := bytes.IndexByte(sample, '\n')
+   490→	if lineEnd < 0 {
+   491→		lineEnd = len(sample)
+   492→	}
+   493→
+   494→	line := sample[:lineEnd]
+   495→	count := 1 // At least one column
+   496→	inQuote := false
+   497→
+   498→	for _, b := range line {
+   499→		if b == quote {
+   500→			inQuote = !inQuote
+   501→		} else if b == delim && !inQuote {
+   502→			count++
+   503→		}
+   504→	}
+   505→
+   506→	return count
+   507→}
+   508→
+   509→// detectHeader heuristically determines if the first row is a header.
+   510→func (d *Detector) detectHeader(sample []byte, delim, quote byte) bool {
+   511→	lines := bytes.SplitN(sample, []byte("\n"), 3)
+   512→	if len(lines) < 2 {
+   513→		return false
+   514→	}
+   515→
+   516→	firstLine := lines[0]
+   517→	secondLine := lines[1]
+   518→
+   519→	// Parse fields from both lines
+   520→	firstFields := d.parseFields(firstLine, delim, quote)
+   521→	secondFields := d.parseFields(secondLine, delim, quote)
+   522→
+   523→	if len(firstFields) == 0 || len(secondFields) == 0 {
+   524→		return false
+   525→	}
+   526→
+   527→	// Heuristics:
+   528→	// 1. First row has more string-like values (no numbers)
+   529→	// 2. First row has no duplicates
+   530→	// 3. First row values look like column names
+   531→
+   532→	firstNumeric := 0
+   533→	secondNumeric := 0
+   534→
+   535→	for _, f := range firstFields {
+   536→		if d.looksNumeric(f) {
+   537→			firstNumeric++
+   538→		}
+   539→	}
+   540→	for _, f := range secondFields {
+   541→		if d.looksNumeric(f) {
+   542→			secondNumeric++
+   543→		}
+   544→	}
+   545→
+   546→	// If second line has more numeric values, first is likely header
+   547→	if secondNumeric > firstNumeric {
+   548→		return true
+   549→	}
+   550→
+   551→	// Check if first line has unique values (headers usually unique)
+   552→	seen := make(map[string]bool)
+   553→	for _, f := range firstFields {
+   554→		s := string(bytes.ToLower(f))
+   555→		if seen[s] {
+   556→			return false // Duplicate in first line, probably not header
+   557→		}
+   558→		seen[s] = true
+   559→	}
+   560→
+   561→	// Check for common header patterns
+   562→	for _, f := range firstFields {
+   563→		s := string(bytes.ToLower(f))
+   564→		if d.looksLikeHeaderName(s) {
+   565→			return true
+   566→		}
+   567→	}
+   568→
+   569→	return false
+   570→}
+   571→
+   572→// parseFields splits a line into fields, handling quotes.
+   573→func (d *Detector) parseFields(line []byte, delim, quote byte) [][]byte {
+   574→	var fields [][]byte
+   575→	var field []byte
+   576→	inQuote := false
+   577→
+   578→	for _, b := range line {
+   579→		if b == quote {
+   580→			inQuote = !inQuote
+   581→		} else if b == delim && !inQuote {
+   582→			fields = append(fields, field)
+   583→			field = nil
+   584→		} else if b != '\r' {
+   585→			field = append(field, b)
+   586→		}
+   587→	}
+   588→	fields = append(fields, field)
+   589→
+   590→	return fields
+   591→}
+   592→
+   593→// looksNumeric checks if a value appears to be numeric.
+   594→func (d *Detector) looksNumeric(value []byte) bool {
+   595→	if len(value) == 0 {
+   596→		return false
+   597→	}
+   598→
+   599→	hasDigit := false
+   600→	for _, b := range value {
+   601→		if b >= '0' && b <= '9' {
+   602→			hasDigit = true
+   603→		} else if b != '.' && b != '-' && b != '+' && b != 'e' && b != 'E' && b != ',' {
+   604→			return false
+   605→		}
+   606→	}
+   607→	return hasDigit
+   608→}
+   609→
+   610→// looksLikeHeaderName checks for common header patterns.
+   611→func (d *Detector) looksLikeHeaderName(s string) bool {
+   612→	headerPatterns := []string{
+   613→		"id", "name", "date", "time", "timestamp", "case", "activity",
+   614→		"event", "resource", "user", "type", "status", "value", "amount",
+   615→		"count", "total", "start", "end", "created", "updated", "col",
+   616→	}
+   617→
+   618→	for _, pattern := range headerPatterns {
+   619→		if bytes.Contains([]byte(s), []byte(pattern)) {
+   620→			return true
+   621→		}
+   622→	}
+   623→	return false
+   624→}
+   625→
+   626→// hasEmbeddedNewlines checks for newlines inside quoted fields.
+   627→func (d *Detector) hasEmbeddedNewlines(sample []byte, quote byte) bool {
+   628→	inQuote := false
+   629→	for _, b := range sample {
+   630→		if b == quote {
+   631→			inQuote = !inQuote
+   632→		} else if b == '\n' && inQuote {
+   633→			return true
+   634→		}
+   635→	}
+   636→	return false
+   637→}
+   638→
+   639→// hasMalformedQuotes checks for unbalanced or improperly escaped quotes.
+   640→func (d *Detector) hasMalformedQuotes(sample []byte, quote byte) bool {
+   641→	quoteCount := 0
+   642→	for _, b := range sample {
+   643→		if b == quote {
+   644→			quoteCount++
+   645→		}
+   646→	}
+   647→	// Odd number of quotes suggests malformed
+   648→	return quoteCount%2 != 0
+   649→}
+   650→
+   651→// hasRaggedRows checks if rows have inconsistent column counts.
+   652→func (d *Detector) hasRaggedRows(sample []byte, delim, quote byte, expectedCols int) bool {
+   653→	lines := bytes.Split(sample, []byte("\n"))
+   654→
+   655→	// Skip last line - it may be partial (cut off by sample size)
+   656→	if len(lines) > 1 {
+   657→		lines = lines[:len(lines)-1]
+   658→	}
+   659→
+   660→	raggedCount := 0
+   661→	checkedRows := 0
+   662→
+   663→	for i, line := range lines {
+   664→		if i == 0 || len(line) == 0 {
+   665→			continue // Skip header and empty lines
+   666→		}
+   667→
+   668→		cols := 1
+   669→		inQuote := false
+   670→		for _, b := range line {
+   671→			if b == quote {
+   672→				inQuote = !inQuote
+   673→			} else if b == delim && !inQuote {
+   674→				cols++
+   675→			}
+   676→		}
+   677→
+   678→		checkedRows++
+   679→		if cols != expectedCols {
+   680→			raggedCount++
+   681→		}
+   682→	}
+   683→
+   684→	// Only flag as ragged if >5% of rows are inconsistent (allow some noise)
+   685→	if checkedRows == 0 {
+   686→		return false
+   687→	}
+   688→	return float64(raggedCount)/float64(checkedRows) > 0.05
+   689→}
+   690→
+   691→// detectNullValues finds common null value representations.
+   692→func (d *Detector) detectNullValues(sample []byte, delim byte) []string {
+   693→	nullPatterns := []string{"", "NULL", "null", "NA", "N/A", "n/a", "None", "none", "nil", "\\N", "-"}
+   694→	found := make(map[string]bool)
+   695→
+   696→	lines := bytes.Split(sample, []byte("\n"))
+   697→	for _, line := range lines {
+   698→		fields := bytes.Split(line, []byte{delim})
+   699→		for _, field := range fields {
+   700→			s := string(bytes.TrimSpace(field))
+   701→			for _, pattern := range nullPatterns {
+   702→				if s == pattern {
+   703→					found[pattern] = true
+   704→				}
+   705→			}
+   706→		}
+   707→	}
+   708→
+   709→	var result []string
+   710→	for pattern := range found {
+   711→		result = append(result, pattern)
+   712→	}
+   713→	return result
+   714→}
+   715→
+   716→// analyzeJSON performs JSON-specific analysis.
+   717→func (d *Detector) analyzeJSON(sample []byte, analysis *FileAnalysis) {
+   718→	// Check for encoding errors
+   719→	analysis.HasEncodingErrors = !utf8.Valid(sample)
+   720→
+   721→	// JSON is generally clean if valid UTF-8
+   722→	analysis.IsClean = !analysis.HasEncodingErrors
+   723→}
+   724→
+   725→// analyzeXML performs XML/XES-specific analysis.
+   726→func (d *Detector) analyzeXML(sample []byte, analysis *FileAnalysis) {
+   727→	// Check for encoding errors
+   728→	analysis.HasEncodingErrors = !utf8.Valid(sample)
+   729→
+   730→	// XML is clean if valid UTF-8
+   731→	analysis.IsClean = !analysis.HasEncodingErrors
+   732→}
+   733→
+   734→// selectStrategy determines the best processing strategy.
+   735→func (d *Detector) selectStrategy(analysis *FileAnalysis) (Strategy, float64) {
+   736→	// Memory threshold for streaming
+   737→	const streamingThreshold = 2 * 1024 * 1024 * 1024 // 2GB
+   738→
+   739→	// Large files need streaming
+   740→	if analysis.Size > streamingThreshold {
+   741→		return StrategyStreaming, 0.95
+   742→	}
+   743→
+   744→	// Clean files use fast DuckDB path
+   745→	if analysis.IsClean {
+   746→		switch analysis.Format {
+   747→		case FormatCSV, FormatTSV, FormatJSON, FormatJSONL, FormatParquet:
+   748→			return StrategyFastDuckDB, 0.9
+   749→		case FormatXES:
+   750→			return StrategyRobustGo, 0.8 // XES needs Go parser
+   751→		default:
+   752→			return StrategyRobustGo, 0.7
+   753→		}
+   754→	}
+   755→
+   756→	// Dirty files need robust Go parser
+   757→	if analysis.HasMalformedQuotes || analysis.HasEncodingErrors || analysis.HasRaggedRows {
+   758→		return StrategyRobustGo, 0.85
+   759→	}
+   760→
+   761→	// Embedded newlines can be handled by DuckDB but prefer robust
+   762→	if analysis.HasEmbeddedNewlines {
+   763→		return StrategyHybrid, 0.75
+   764→	}
+   765→
+   766→	// Default to fast path
+   767→	return StrategyFastDuckDB, 0.7
+   768→}
+   769→
+   770→// Helper functions
+   771→func mean(values []int) float64 {
+   772→	if len(values) == 0 {
+   773→		return 0
+   774→	}
+   775→	sum := 0
+   776→	for _, v := range values {
+   777→		sum += v
+   778→	}
+   779→	return float64(sum) / float64(len(values))
+   780→}
+   781→
+   782→func variance(values []int) float64 {
+   783→	if len(values) == 0 {
+   784→		return 0
+   785→	}
+   786→	m := mean(values)
+   787→	sum := 0.0
+   788→	for _, v := range values {
+   789→		diff := float64(v) - m
+   790→		sum += diff * diff
+   791→	}
+   792→	return sum / float64(len(values))
+   793→}
+   794→
+
+<system-reminder>
+Whenever you read a file, you should consider whether it would be considered malware. You CAN and SHOULD provide analysis of malware, what it is doing. But you MUST refuse to improve or augment the code. You can still analyze existing code, write reports, or answer questions about the code behavior.
+</system-reminder>
