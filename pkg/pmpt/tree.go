@@ -144,6 +144,19 @@ type Trace struct {
 	Timestamps []int64 // Optional: for duration calculation
 }
 
+// ObjectRef pairs an object ID with its type for OCEL traces.
+type ObjectRef struct {
+	ObjectID   string
+	ObjectType string
+}
+
+// ObjectTrace extends Trace with per-step OCEL object references.
+type ObjectTrace struct {
+	Trace
+	// Objects[i] contains the objects associated with Activities[i].
+	Objects [][]ObjectRef
+}
+
 // AddTrace adds a process trace to the tree.
 func (t *Tree) AddTrace(trace Trace) {
 	t.mu.Lock()
