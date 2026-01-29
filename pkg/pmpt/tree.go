@@ -216,6 +216,88 @@ func (t *Tree) AddTrace(trace Trace) {
 	t.RootHash = t.computeRootHash()
 }
 
+// AddTraceWithObjects adds a process trace with OCEL object references.
+// caseSeqID is the sequential uint32 ID assigned to this case by the builder.
+// objectIDMap maps "type:id" strings to sequential uint32 IDs for bitmap indexing.
+func (t *Tree) AddTraceWithObjects(trace ObjectTrace, caseSeqID uint32, objectIDMap map[string]uint32) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if len(trace.Activities) == 0 {
+		return
+	}
+
+	t.TotalCases++
+	current := t.Root
+
+	for i, activity := range trace.Activities {
+		t.TotalEvents++
+
+		expectedHash := hashNode(activity, []*ProcessNode{current})
+
+		node, exists := t.NodeIndex[expectedHash]
+		if !exists {
+			node = &ProcessNode{
+				NodeHash:     expectedHash,
+				Activity:     activity,
+				Parents:      []*ProcessNode{current},
+				Children:     make([]*ProcessNode, 0),
+				Depth:        current.Depth + 1,
+				CaseBitmap:   roaring.New(),
+				ObjectCounts: make(map[string]int64),
+				ObjectBitmap: make(map[string]*roaring.Bitmap),
+			}
+			t.NodeIndex[expectedHash] = node
+			t.ActivityIndex[activity] = append(t.ActivityIndex[activity], node)
+			t.UniqueNodes++
+			current.Children = append(current.Children, node)
+			if node.Depth > t.MaxDepth {
+				t.MaxDepth = node.Depth
+			}
+		}
+
+		node.CaseCount++
+		if node.CaseBitmap == nil {
+			node.CaseBitmap = roaring.New()
+		}
+		node.CaseBitmap.Add(caseSeqID)
+
+		// Duration tracking
+		if len(trace.Timestamps) > i+1 {
+			duration := trace.Timestamps[i+1] - trace.Timestamps[i]
+			node.AvgDuration = (node.AvgDuration*(node.CaseCount-1) + duration) / node.CaseCount
+		}
+
+		// Object tracking
+		if i < len(trace.Objects) && trace.Objects[i] != nil {
+			if node.ObjectCounts == nil {
+				node.ObjectCounts = make(map[string]int64)
+			}
+			if node.ObjectBitmap == nil {
+				node.ObjectBitmap = make(map[string]*roaring.Bitmap)
+			}
+			for _, obj := range trace.Objects[i] {
+				key := obj.ObjectType + ":" + obj.ObjectID
+				seqID, ok := objectIDMap[key]
+				if !ok {
+					continue
+				}
+				if node.ObjectBitmap[obj.ObjectType] == nil {
+					node.ObjectBitmap[obj.ObjectType] = roaring.New()
+				}
+				if !node.ObjectBitmap[obj.ObjectType].Contains(seqID) {
+					node.ObjectBitmap[obj.ObjectType].Add(seqID)
+					node.ObjectCounts[obj.ObjectType]++
+				}
+			}
+		}
+
+		current = node
+	}
+
+	t.RootHash = t.computeRootHash()
+}
+
 // computeRootHash computes the Merkle root hash of the entire tree.
 func (t *Tree) computeRootHash() Hash {
 	return t.hashSubtree(t.Root)
