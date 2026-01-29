@@ -134,6 +134,10 @@ func inferGoType(value interface{}) arrow.Type {
 		return arrow.STRING
 	case []byte:
 		return arrow.BINARY
+	case []interface{}:
+		return arrow.LIST
+	case map[string]interface{}:
+		return arrow.STRUCT
 	default:
 		return arrow.STRING
 	}
