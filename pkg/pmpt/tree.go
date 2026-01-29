@@ -16,6 +16,8 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+
+	"github.com/RoaringBitmap/roaring"
 )
 
 // Hash represents a 32-byte SHA-256 hash.
