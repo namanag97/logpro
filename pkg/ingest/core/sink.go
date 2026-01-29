@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"io"
 	"time"
 
 	"github.com/apache/arrow/go/v14/arrow"
@@ -27,6 +28,9 @@ type SinkOptions struct {
 	// Path is the output location.
 	Path string
 
+	// Writer is an optional io.WriteCloser for streaming output.
+	Writer io.WriteCloser
+
 	// Compression algorithm.
 	Compression Compression
 
@@ -51,6 +55,9 @@ type SinkOptions struct {
 	// MaxRowsPerFile for splitting output.
 	MaxRowsPerFile int64
 
+	// TargetFileSize for rolling files (Iceberg).
+	TargetFileSize int64
+
 	// Metadata to include in output.
 	Metadata map[string]string
 }
@@ -71,6 +78,9 @@ func DefaultSinkOptions() SinkOptions {
 type SinkResult struct {
 	// Path of the output file(s).
 	Path string
+
+	// Paths of all output files (for multi-file output).
+	Paths []string
 
 	// RowsWritten total.
 	RowsWritten int64

@@ -73,6 +73,9 @@ type DecodedBatch struct {
 
 	// BytesRead from source for this batch.
 	BytesRead int64
+
+	// IsFinal indicates this is the last batch.
+	IsFinal bool
 }
 
 // RowError represents an error in a specific row.
