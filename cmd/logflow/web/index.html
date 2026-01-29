@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LOGFLOW</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --white: #FFFFFF;
+            --black: #111111;
+            --gray: #666666;
+            --light-gray: #E5E5E5;
+            --accent: #FF0000;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+            background: var(--white);
+            color: var(--black);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+        }
+
+        .container {
+            max-width: 600px;
+            width: 100%;
+            text-align: center;
+        }
+
+        h1 {
+            font-size: 0.875rem;
+            font-weight: 500;
+            letter-spacing: 0.2em;
+            text-transform: uppercase;
+            margin-bottom: 0.5rem;
+        }
+
+        .subtitle {
+            color: var(--gray);
+            font-size: 0.875rem;
+            margin-bottom: 3rem;
+        }
+
+        .drop-zone {
+            border: 1px solid var(--light-gray);
+            padding: 4rem 2rem;
+            margin-bottom: 2rem;
+            cursor: pointer;
+            transition: border-color 0.2s;
+        }
+
+        .drop-zone:hover,
+        .drop-zone.dragover {
+            border-color: var(--black);
+        }
+
+        .drop-zone-text {
+            color: var(--gray);
+            font-size: 0.875rem;
+        }
+
+        .drop-zone input {
+            display: none;
+        }
+
+        .status {
+            padding: 1rem;
+            background: var(--light-gray);
+            font-family: 'JetBrains Mono', 'Courier New', monospace;
+            font-size: 0.75rem;
+            text-align: left;
+            display: none;
+        }
+
+        .status.visible {
+            display: block;
+        }
+
+        .progress-bar {
+            height: 2px;
+            background: var(--light-gray);
+            margin-top: 1rem;
+            display: none;
+        }
+
+        .progress-bar.visible {
+            display: block;
+        }
+
+        .progress-bar-fill {
+            height: 100%;
+            background: var(--black);
+            width: 0%;
+            transition: width 0.3s;
+        }
+
+        .result {
+            margin-top: 2rem;
+            padding: 2rem;
+            border: 1px solid var(--black);
+            display: none;
+        }
+
+        .result.visible {
+            display: block;
+        }
+
+        .result h2 {
+            font-size: 0.75rem;
+            font-weight: 500;
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            color: #00AA00;
+            margin-bottom: 1rem;
+        }
+
+        .result-stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+            text-align: left;
+        }
+
+        .stat-label {
+            font-size: 0.625rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--gray);
+        }
+
+        .stat-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 1.25rem;
+        }
+
+        .download-btn {
+            display: inline-block;
+            margin-top: 2rem;
+            padding: 1rem 2rem;
+            background: var(--black);
+            color: var(--white);
+            text-decoration: none;
+            font-size: 0.75rem;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            cursor: pointer;
+            border: none;
+        }
+
+        .download-btn:hover {
+            background: var(--gray);
+        }
+
+        .api-info {
+            margin-top: 4rem;
+            padding-top: 2rem;
+            border-top: 1px solid var(--light-gray);
+            font-size: 0.75rem;
+            color: var(--gray);
+        }
+
+        .api-info code {
+            background: var(--light-gray);
+            padding: 0.125rem 0.375rem;
+            font-family: 'JetBrains Mono', monospace;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>LOGFLOW</h1>
+        <p class="subtitle">High-performance data conversion</p>
+
+        <div class="drop-zone" id="dropZone">
+            <p class="drop-zone-text">Drop CSV, JSON, or XLSX file here<br><small>or click to select</small></p>
+            <input type="file" id="fileInput" accept=".csv,.json,.jsonl,.xlsx,.xes">
+        </div>
+
+        <div class="status" id="status"></div>
+        <div class="progress-bar" id="progressBar">
+            <div class="progress-bar-fill" id="progressFill"></div>
+        </div>
+
+        <div class="result" id="result">
+            <h2>✓ Conversion Complete</h2>
+            <div class="result-stats">
+                <div>
+                    <div class="stat-label">Rows</div>
+                    <div class="stat-value" id="rowCount">-</div>
+                </div>
+                <div>
+                    <div class="stat-label">Compression</div>
+                    <div class="stat-value" id="compression">-</div>
+                </div>
+                <div>
+                    <div class="stat-label">Input Size</div>
+                    <div class="stat-value" id="inputSize">-</div>
+                </div>
+                <div>
+                    <div class="stat-label">Output Size</div>
+                    <div class="stat-value" id="outputSize">-</div>
+                </div>
+            </div>
+            <button class="download-btn" id="downloadBtn">Download Parquet</button>
+        </div>
+
+        <div class="api-info">
+            API: <code>POST /api/upload</code> · <code>POST /api/convert</code> · <code>GET /api/job/:id</code>
+        </div>
+    </div>
+
+    <script>
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+        const status = document.getElementById('status');
+        const progressBar = document.getElementById('progressBar');
+        const progressFill = document.getElementById('progressFill');
+        const result = document.getElementById('result');
+
+        let currentJobId = null;
+
+        // Drag and drop
+        dropZone.addEventListener('click', () => fileInput.click());
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('dragover');
+        });
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            if (e.dataTransfer.files.length) {
+                handleFile(e.dataTransfer.files[0]);
+            }
+        });
+        fileInput.addEventListener('change', () => {
+            if (fileInput.files.length) {
+                handleFile(fileInput.files[0]);
+            }
+        });
+
+        async function handleFile(file) {
+            showStatus(`Uploading ${file.name}...`);
+            showProgress(0);
+
+            // Upload
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const uploadRes = await fetch('/api/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                const uploadData = await uploadRes.json();
+
+                if (uploadData.error) {
+                    showStatus(`Error: ${uploadData.error}`);
+                    return;
+                }
+
+                showStatus(`Uploaded. Starting conversion...`);
+                showProgress(20);
+
+                // Convert
+                const convertRes = await fetch('/api/convert', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        job_id: uploadData.job_id,
+                        file_path: uploadData.file_path
+                    })
+                });
+                const convertData = await convertRes.json();
+                currentJobId = uploadData.job_id;
+
+                // Poll for completion
+                pollJob(currentJobId);
+
+            } catch (err) {
+                showStatus(`Error: ${err.message}`);
+            }
+        }
+
+        async function pollJob(jobId) {
+            try {
+                const res = await fetch(`/api/job/${jobId}`);
+                const job = await res.json();
+
+                if (job.status === 'running') {
+                    const pct = job.progress?.percent || 50;
+                    showStatus(`Converting... ${pct.toFixed(0)}%`);
+                    showProgress(20 + pct * 0.7);
+                    setTimeout(() => pollJob(jobId), 500);
+                } else if (job.status === 'completed') {
+                    showStatus('Complete!');
+                    showProgress(100);
+                    showResult(job);
+                } else if (job.status === 'failed') {
+                    showStatus(`Failed: ${job.error}`);
+                }
+            } catch (err) {
+                showStatus(`Error: ${err.message}`);
+            }
+        }
+
+        function showStatus(text) {
+            status.textContent = text;
+            status.classList.add('visible');
+        }
+
+        function showProgress(pct) {
+            progressBar.classList.add('visible');
+            progressFill.style.width = `${pct}%`;
+        }
+
+        function showResult(job) {
+            const r = job.result;
+            document.getElementById('rowCount').textContent = formatNumber(r.row_count);
+            document.getElementById('compression').textContent = r.compression.toFixed(1) + 'x';
+            document.getElementById('inputSize').textContent = formatBytes(r.input_size);
+            document.getElementById('outputSize').textContent = formatBytes(r.output_size);
+
+            document.getElementById('downloadBtn').onclick = () => {
+                window.location.href = `/api/download/${job.id}`;
+            };
+
+            result.classList.add('visible');
+        }
+
+        function formatNumber(n) {
+            if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+            if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+            return n.toString();
+        }
+
+        function formatBytes(b) {
+            if (b >= 1e9) return (b / 1e9).toFixed(1) + ' GB';
+            if (b >= 1e6) return (b / 1e6).toFixed(1) + ' MB';
+            if (b >= 1e3) return (b / 1e3).toFixed(1) + ' KB';
+            return b + ' B';
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,340 @@
+USER: GUESTENV: PRODUCTION
+@AMMAAR_V3.0
+SOURCE_CODE.tsx
+[ X ]
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Refactor Global Navigation Sticky Logic | Swiss Modular System</title>
+    <style>
+        :root {
+            --bg-color: #ffffff;
+            --text-color: #000000;
+            --accent-color: #ff0000;
+            --grid-line: #e0e0e0;
+            --font-main: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+            --column-gap: 20px;
+            --baseline: 8px;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-family: var(--font-main);
+            line-height: 1.4;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* Swiss Grid Overlay (Optional visual guide) */
+        .grid-wrapper {
+            display: grid;
+            grid-template-columns: repeat(12, 1fr);
+            column-gap: var(--column-gap);
+            max-width: 1440px;
+            margin: 0 auto;
+            padding: 0 20px;
+        }
+
+        /* Component: Global Navigation */
+        .nav-container {
+            width: 100%;
+            z-index: 1000;
+            border-bottom: 1px solid var(--text-color);
+            background: var(--bg-color);
+            transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        /* Sticky Logic Implementation */
+        .nav-container.is-sticky {
+            position: fixed;
+            top: 0;
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            padding: 10px 0;
+            box-shadow: 0 4px 30px rgba(0,0,0,0.05);
+        }
+
+        .nav-inner {
+            display: grid;
+            grid-template-columns: repeat(12, 1fr);
+            column-gap: var(--column-gap);
+            max-width: 1440px;
+            margin: 0 auto;
+            padding: 24px 20px;
+            align-items: center;
+        }
+
+        .nav-logo {
+            grid-column: span 3;
+            font-weight: 800;
+            font-size: 1.2rem;
+            letter-spacing: -0.04em;
+            text-transform: uppercase;
+        }
+
+        .nav-links {
+            grid-column: 4 / span 6;
+            display: flex;
+            gap: 40px;
+        }
+
+        .nav-links a {
+            text-decoration: none;
+            color: var(--text-color);
+            font-size: 0.9rem;
+            font-weight: 500;
+            text-transform: uppercase;
+        }
+
+        .nav-cta {
+            grid-column: 10 / span 3;
+            text-align: right;
+            font-size: 0.9rem;
+            font-weight: 700;
+        }
+
+        /* Section: Documentation / Logic */
+        .section {
+            padding: 80px 0;
+            border-bottom: 1px solid var(--grid-line);
+        }
+
+        .hero {
+            padding-top: 120px;
+            padding-bottom: 160px;
+        }
+
+        .hero h1 {
+            grid-column: span 8;
+            font-size: clamp(3rem, 8vw, 6rem);
+            line-height: 0.9;
+            letter-spacing: -0.05em;
+            text-transform: uppercase;
+            font-weight: 900;
+            margin-bottom: 40px;
+        }
+
+        .hero-meta {
+            grid-column: 10 / span 3;
+            padding-top: 15px;
+            border-top: 4px solid var(--text-color);
+            font-size: 0.8rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        /* Content Modules */
+        .card {
+            grid-column: span 4;
+            padding: 20px;
+            border: 1px solid var(--text-color);
+            min-height: 300px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+
+        .card.accent {
+            background-color: var(--accent-color);
+            color: white;
+            border-color: var(--accent-color);
+        }
+
+        .card h3 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            margin-bottom: 10px;
+        }
+
+        .card-code {
+            font-family: monospace;
+            font-size: 0.8rem;
+            margin-top: 20px;
+            background: rgba(0,0,0,0.05);
+            padding: 10px;
+        }
+
+        .large-text {
+            grid-column: span 12;
+            font-size: 2rem;
+            font-weight: 400;
+            line-height: 1.2;
+            margin: 60px 0;
+            max-width: 80%;
+        }
+
+        .placeholder-box {
+            grid-column: span 6;
+            height: 400px;
+            background: #f4f4f4;
+            margin-bottom: var(--column-gap);
+        }
+
+        footer {
+            padding: 40px 20px;
+            text-align: center;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            background: #000;
+            color: #fff;
+        }
+
+        /* Responsive Logic */
+        @media (max-width: 1024px) {
+            .nav-links { display: none; }
+            .hero h1 { grid-column: span 12; }
+            .card { grid-column: span 6; }
+        }
+
+        @media (max-width: 768px) {
+            .card { grid-column: span 12; }
+            .hero-meta { grid-column: span 12; margin-top: 20px; }
+            .placeholder-box { grid-column: span 12; }
+        }
+    </style>
+</head>
+<body>
+
+    <nav class="nav-container" id="globalNav">
+        <div class="nav-inner">
+            <div class="nav-logo">Module.04</div>
+            <div class="nav-links">
+                <a href="#logic">Logic</a>
+                <a href="#refactor">Refactor</a>
+                <a href="#metrics">Metrics</a>
+                <a href="#docs">Documentation</a>
+            </div>
+            <div class="nav-cta">LOG_REFACTOR_V1.0</div>
+        </div>
+    </nav>
+
+    <main>
+        <section class="grid-wrapper hero">
+            <h1>Refactor<br>Global<br>Navigation</h1>
+            <div class="hero-meta">
+                Task ID: #4092<br>
+                Status: Systemic Refactor<br>
+                Method: Modular Grid Logic
+            </div>
+        </section>
+
+        <section id="logic" class="grid-wrapper section">
+            <p class="large-text">
+                The objective is to replace legacy scroll event listeners with <b>Intersection Observer API</b> to achieve 60fps performance and eliminate layout thrashing during "sticky" state transitions.
+            </p>
+
+            <div class="card">
+                <div>
+                    <h3>Legacy Logic</h3>
+                    <p>window.onscroll triggers layout recalculations on every frame.</p>
+                </div>
+                <div class="card-code">
+                    window.addEventListener('scroll', ...);<br>
+                    // High CPU overhead
+                </div>
+            </div>
+
+            <div class="card accent">
+                <div>
+                    <h3>New System</h3>
+                    <p>Observer patterns decoupling scroll position from DOM mutations.</p>
+                </div>
+                <div class="card-code">
+                    new IntersectionObserver(...)<br>
+                    // Optimized performance
+                </div>
+            </div>
+
+            <div class="card">
+                <div>
+                    <h3>Swiss Grid</h3>
+                    <p>Alignment to a 12-column mathematical grid system.</p>
+                </div>
+                <div class="card-code">
+                    grid-template-columns: 12;<br>
+                    // Rational order
+                </div>
+            </div>
+        </section>
+
+        <section id="refactor" class="grid-wrapper section">
+            <div class="placeholder-box"></div>
+            <div class="placeholder-box"></div>
+            <div class="placeholder-box"></div>
+            <div class="placeholder-box"></div>
+        </section>
+
+        <section class="grid-wrapper section" style="height: 100vh;">
+            <p class="large-text">Scroll down to observe the sticky logic transition. The navigation bar will mutate its physical properties based on the observer threshold, adhering to Swiss minimalist visual hierarchy.</p>
+        </section>
+    </main>
+
+    <footer>
+        &copy; 2024 Design System Lab — Swiss Modular Grid Component
+    </footer>
+
+    <script>
+        /**
+         * Refactor: Global Navigation Sticky Logic
+         * Using Intersection Observer instead of scroll listeners.
+         * We create a 'sentinel' element or observe the hero to toggle state.
+         */
+
+        const nav = document.getElementById('globalNav');
+        const hero = document.querySelector('.hero');
+
+        const navObserverOptions = {
+            root: null,
+            threshold: 0,
+            rootMargin: "-80px 0px 0px 0px" // Trigger slightly before it hits top
+        };
+
+        const navObserver = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (!entry.isIntersecting) {
+                    nav.classList.add('is-sticky');
+                } else {
+                    nav.classList.remove('is-sticky');
+                }
+            });
+        }, navObserverOptions);
+
+        navObserver.observe(hero);
+
+        // Subtle animation logic for cards on scroll
+        const cards = document.querySelectorAll('.card');
+        const fadeObserver = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.style.opacity = '1';
+                    entry.target.style.transform = 'translateY(0)';
+                }
+            });
+        }, { threshold: 0.1 });
+
+        cards.forEach(card => {
+            card.style.opacity = '0';
+            card.style.transform = 'translateY(20px)';
+            card.style.transition = 'all 0.6s cubic-bezier(0.16, 1, 0.3, 1)';
+            fadeObserver.observe(card);
+        });
+    </script>
+</body>
+</html>
+
+>
+ESC GRID_VIEW
+V VARIATIONS
+S SOURCE
+refactor_global_navigation_sticky_logic
+[ ENTER ]
