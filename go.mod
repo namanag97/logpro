@@ -30,13 +30,13 @@ require (
 )
 
 require (
+	github.com/RoaringBitmap/roaring v1.9.4
 	go.opentelemetry.io/otel/trace v1.24.0
 	google.golang.org/grpc v1.61.1
 )
 
 require (
 	github.com/JohnCGriffin/overflow v0.0.0-20211019200055-46fa312c352c // indirect
-	github.com/RoaringBitmap/roaring v1.9.4 // indirect
 	github.com/andybalholm/brotli v1.0.5 // indirect
 	github.com/apache/thrift v0.17.0 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.6.1 // indirect

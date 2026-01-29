@@ -3,8 +3,6 @@ package pmpt
 import (
 	"sync"
 
-	"github.com/RoaringBitmap/roaring"
-
 	"github.com/logflow/logflow/internal/model"
 )
 
