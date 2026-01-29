@@ -42,7 +42,12 @@ func (e *EntropySampler) Add(value string) {
 func (e *EntropySampler) Entropy() float64 {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	return e.entropyLocked()
+}
 
+// entropyLocked computes Shannon entropy without acquiring the mutex.
+// Caller must hold e.mu.
+func (e *EntropySampler) entropyLocked() float64 {
 	if e.sampled == 0 {
 		return 0
 	}
@@ -74,7 +79,7 @@ func (e *EntropySampler) NormalizedEntropy() float64 {
 		return 0
 	}
 
-	return e.Entropy() / maxEntropy
+	return e.entropyLocked() / maxEntropy
 }
 
 // UniqueRatio returns ratio of unique values.
