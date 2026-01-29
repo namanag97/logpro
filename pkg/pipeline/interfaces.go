@@ -148,6 +148,16 @@ type Config struct {
 	BatchSize  int
 	UseDuckDB  bool
 
+	// Error handling
+	ErrorPolicy    ErrorPolicy
+	MaxErrors      int64 // Maximum errors before aborting (0 = unlimited)
+	QuarantinePath string // Path for quarantined records
+
+	// Callbacks
+	OnError    func(ErrorRecord)
+	OnSkip     func(rowNum int64, reason string)
+	OnProgress func(rowsProcessed, bytesRead int64)
+
 	// Processor-specific options
 	ProcessorOptions map[string]interface{}
 }
@@ -162,6 +172,8 @@ func DefaultConfig() Config {
 		BufferSize:       64 * 1024,
 		BatchSize:        1024,
 		Compression:      "snappy",
+		ErrorPolicy:      ErrorPolicySkip, // Default to skip bad rows
+		MaxErrors:        0,               // No limit by default
 		ProcessorOptions: make(map[string]interface{}),
 	}
 }

@@ -4,6 +4,7 @@ package adapters
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"io"
 	"time"
 
@@ -14,16 +15,22 @@ import (
 
 // CSVSource reads events from CSV files.
 type CSVSource struct {
-	cfg         pipeline.Config
-	bufferPool  *pool.BufferPool
-	eventPool   *pool.EventPool
-	delimiter   byte
+	cfg          pipeline.Config
+	bufferPool   *pool.BufferPool
+	eventPool    *pool.EventPool
+	delimiter    byte
+	errorHandler *pipeline.ErrorHandler
 
 	// Column indices (resolved from header)
 	caseIdx      int
 	activityIdx  int
 	timestampIdx int
 	resourceIdx  int
+
+	// Tracking for error context
+	currentRow  int64
+	byteOffset  int64
+	sourceFile  string
 }
 
 // NewCSVSource creates a new CSV source.
@@ -33,15 +40,28 @@ func NewCSVSource(cfg pipeline.Config) (*CSVSource, error) {
 		delimiter = d
 	}
 
+	// Initialize error handler with configured policy
+	errorHandler := pipeline.NewErrorHandler(cfg.ErrorPolicy).
+		WithMaxErrors(cfg.MaxErrors)
+
+	if cfg.OnError != nil {
+		errorHandler.WithOnError(cfg.OnError)
+	}
+	if cfg.OnSkip != nil {
+		errorHandler.WithOnSkip(cfg.OnSkip)
+	}
+
 	return &CSVSource{
-		cfg:        cfg,
-		bufferPool: pool.NewBufferPool(cfg.BufferSize),
-		eventPool:  pool.NewEventPool(),
-		delimiter:  delimiter,
-		caseIdx:    -1,
-		activityIdx: -1,
+		cfg:          cfg,
+		bufferPool:   pool.NewBufferPool(cfg.BufferSize),
+		eventPool:    pool.NewEventPool(),
+		delimiter:    delimiter,
+		errorHandler: errorHandler,
+		caseIdx:      -1,
+		activityIdx:  -1,
 		timestampIdx: -1,
-		resourceIdx: -1,
+		resourceIdx:  -1,
+		sourceFile:   cfg.SourcePath,
 	}, nil
 }
 
@@ -58,6 +78,8 @@ func (s *CSVSource) SupportsFormat(format string) bool {
 // Read implements Source.Read.
 func (s *CSVSource) Read(ctx context.Context, r io.Reader, out chan<- *pipeline.Event) error {
 	reader := bufio.NewReaderSize(r, s.cfg.BufferSize)
+	s.currentRow = 0
+	s.byteOffset = 0
 
 	// Parse header
 	headerLine, err := reader.ReadBytes('\n')
@@ -67,6 +89,7 @@ func (s *CSVSource) Read(ctx context.Context, r io.Reader, out chan<- *pipeline.
 	if len(headerLine) == 0 {
 		return nil
 	}
+	s.byteOffset += int64(len(headerLine))
 
 	columns := s.parseLine(trimLineEnding(headerLine))
 	s.resolveColumnIndices(columns)
@@ -79,6 +102,8 @@ func (s *CSVSource) Read(ctx context.Context, r io.Reader, out chan<- *pipeline.
 		}
 	}
 
+	expectedCols := len(columns)
+
 	// Parse data rows
 	for {
 		select {
@@ -87,6 +112,7 @@ func (s *CSVSource) Read(ctx context.Context, r io.Reader, out chan<- *pipeline.
 		default:
 		}
 
+		lineStart := s.byteOffset
 		line, err := reader.ReadBytes('\n')
 		if err != nil && err != io.EOF {
 			return err
@@ -95,15 +121,40 @@ func (s *CSVSource) Read(ctx context.Context, r io.Reader, out chan<- *pipeline.
 			break
 		}
 
+		s.currentRow++
+		s.byteOffset += int64(len(line))
+
 		line = trimLineEnding(line)
 		if len(line) == 0 {
 			continue
 		}
 
-		event := s.eventPool.Get()
 		fields := s.parseLine(line)
 
-		// Extract required fields
+		// Check for ragged rows
+		if len(fields) != expectedCols {
+			errRec := pipeline.ErrorRecord{
+				RowNumber:  s.currentRow,
+				ByteOffset: lineStart,
+				RawData:    append([]byte{}, line...),
+				ErrorType:  pipeline.ErrorTypeMalformedRow,
+				Message:    fmt.Sprintf("column count mismatch: expected %d, got %d", expectedCols, len(fields)),
+				SourceFile: s.sourceFile,
+				Timestamp:  time.Now(),
+			}
+
+			cont, handleErr := s.errorHandler.HandleError(errRec)
+			if !cont {
+				return handleErr
+			}
+			continue
+		}
+
+		event := s.eventPool.Get()
+
+		// Extract required fields with validation
+		var parseErr error
+
 		if s.caseIdx < len(fields) {
 			event.CaseID = append(event.CaseID[:0], fields[s.caseIdx]...)
 		}
@@ -111,11 +162,36 @@ func (s *CSVSource) Read(ctx context.Context, r io.Reader, out chan<- *pipeline.
 			event.Activity = append(event.Activity[:0], fields[s.activityIdx]...)
 		}
 		if s.timestampIdx < len(fields) {
-			ts, _ := pool.ParseTimestampNanosFast(fields[s.timestampIdx])
+			ts, tsErr := pool.ParseTimestampNanosFast(fields[s.timestampIdx])
+			if tsErr != nil {
+				parseErr = tsErr
+			}
 			event.Timestamp = ts
 		}
 		if s.resourceIdx >= 0 && s.resourceIdx < len(fields) {
 			event.Resource = append(event.Resource[:0], fields[s.resourceIdx]...)
+		}
+
+		// Handle timestamp parse errors
+		if parseErr != nil {
+			s.eventPool.Put(event)
+
+			errRec := pipeline.ErrorRecord{
+				RowNumber:  s.currentRow,
+				ByteOffset: lineStart,
+				RawData:    append([]byte{}, line...),
+				ErrorType:  pipeline.ErrorTypeInvalidTimestamp,
+				Message:    "failed to parse timestamp: " + parseErr.Error(),
+				Column:     s.cfg.TimestampColumn,
+				SourceFile: s.sourceFile,
+				Timestamp:  time.Now(),
+			}
+
+			cont, handleErr := s.errorHandler.HandleError(errRec)
+			if !cont {
+				return handleErr
+			}
+			continue
 		}
 
 		// Add remaining columns as attributes
@@ -142,12 +218,27 @@ func (s *CSVSource) Read(ctx context.Context, r io.Reader, out chan<- *pipeline.
 			return ctx.Err()
 		}
 
+		// Report progress
+		if s.cfg.OnProgress != nil && s.currentRow%1000 == 0 {
+			s.cfg.OnProgress(s.currentRow, s.byteOffset)
+		}
+
 		if err == io.EOF {
 			break
 		}
 	}
 
 	return nil
+}
+
+// ErrorStats returns error handling statistics.
+func (s *CSVSource) ErrorStats() pipeline.ErrorStats {
+	return s.errorHandler.Stats()
+}
+
+// Errors returns collected error records.
+func (s *CSVSource) Errors() []pipeline.ErrorRecord {
+	return s.errorHandler.Errors()
 }
 
 // resolveColumnIndices finds the indices of required columns.

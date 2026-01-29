@@ -12,6 +12,8 @@ import (
 	"time"
 
 	_ "github.com/marcboeker/go-duckdb"
+
+	"github.com/logflow/logflow/pkg/ingest/telemetry"
 )
 
 // ConversionResult holds the outcome of a conversion.
@@ -144,6 +146,15 @@ func (c *Converter) Convert(ctx context.Context, inputPath string, opts Conversi
 		Throughput:  float64(rowCount) / duration.Seconds(),
 		Compression: float64(inputInfo.Size()) / float64(outputInfo.Size()),
 	}
+
+	// Record telemetry
+	metrics := telemetry.Global()
+	metrics.AddRowsRead(rowCount)
+	metrics.AddRowsWritten(rowCount)
+	metrics.AddBytesRead(inputInfo.Size())
+	metrics.AddBytesWritten(outputInfo.Size())
+	metrics.RecordFormat(format, rowCount, inputInfo.Size(), duration, 0)
+	metrics.RecordPhase("conversion", duration)
 
 	return result, nil
 }

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/logflow/logflow/pkg/core"
+	"github.com/logflow/logflow/pkg/ingest/telemetry"
 	"github.com/logflow/logflow/pkg/plugins/processmining"
 	"github.com/logflow/logflow/pkg/plugins/quality"
 )
@@ -22,9 +23,24 @@ import (
 type Server struct {
 	converter *core.Converter
 	plugins   *core.PluginRegistry
-	jobs      sync.Map // jobID -> *Job
+	jobs      sync.Map // jobID -> *Job (in-memory cache)
+	jobStore  *JobStore // Persistent storage
 	mux       *http.ServeMux
 	staticFS  embed.FS
+	sseBroker *SSEBroker
+	startTime time.Time
+	metrics   *ServerMetrics
+}
+
+// ServerMetrics tracks server-level metrics.
+type ServerMetrics struct {
+	RequestCount     int64
+	ConversionCount  int64
+	TotalRowsWritten int64
+	TotalBytesRead   int64
+	TotalBytesWritten int64
+	ErrorCount       int64
+	mu               sync.RWMutex
 }
 
 // Job represents a conversion job.
@@ -56,23 +72,63 @@ func NewServer(staticFS embed.FS) (*Server, error) {
 		return nil, err
 	}
 
+	// Initialize job storage
+	dataDir := os.Getenv("LOGFLOW_DATA_DIR")
+	if dataDir == "" {
+		homeDir, _ := os.UserHomeDir()
+		dataDir = filepath.Join(homeDir, ".logflow")
+	}
+	jobStorePath := filepath.Join(dataDir, "jobs.json")
+
+	jobStore, err := NewJobStore(jobStorePath)
+	if err != nil {
+		// Non-fatal - continue without persistence
+		jobStore = nil
+	}
+
 	s := &Server{
 		converter: converter,
 		plugins:   core.NewPluginRegistry(),
 		mux:       http.NewServeMux(),
 		staticFS:  staticFS,
+		sseBroker: NewSSEBroker(),
+		startTime: time.Now(),
+		metrics:   &ServerMetrics{},
+		jobStore:  jobStore,
+	}
+
+	// Load existing jobs into memory cache
+	if jobStore != nil {
+		jobStore.Range(func(id string, job *Job) bool {
+			s.jobs.Store(id, job)
+			return true
+		})
 	}
 
 	s.setupRoutes()
 	return s, nil
 }
 
+// getJob returns a job by ID (for SSE handler).
+func (s *Server) getJob(jobID string) interface{} {
+	if v, ok := s.jobs.Load(jobID); ok {
+		return v
+	}
+	return nil
+}
+
 // setupRoutes configures HTTP handlers.
 func (s *Server) setupRoutes() {
+	// Health and metrics
+	s.mux.HandleFunc("/health", s.handleHealth)
+	s.mux.HandleFunc("/api/metrics", s.handleMetrics)
+	s.mux.HandleFunc("/api/events", s.sseBroker.SSEHandler(s.getJob))
+
 	// API routes
 	s.mux.HandleFunc("/api/upload", s.handleUpload)
 	s.mux.HandleFunc("/api/convert", s.handleConvert)
 	s.mux.HandleFunc("/api/job/", s.handleJob)
+	s.mux.HandleFunc("/api/jobs", s.handleJobs)
 	s.mux.HandleFunc("/api/schema", s.handleSchema)
 	s.mux.HandleFunc("/api/plugins", s.handlePlugins)
 	s.mux.HandleFunc("/api/analyze", s.handleAnalyze)
@@ -99,7 +155,19 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // Close releases resources.
 func (s *Server) Close() error {
+	// Save jobs before closing
+	if s.jobStore != nil {
+		s.jobStore.Close()
+	}
 	return s.converter.Close()
+}
+
+// storeJob persists a job to both memory and disk.
+func (s *Server) storeJob(job *Job) {
+	s.jobs.Store(job.ID, job)
+	if s.jobStore != nil {
+		s.jobStore.Put(job)
+	}
 }
 
 // handleStatic serves the embedded web UI.
@@ -186,7 +254,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 			Message:   "File uploaded, ready to convert",
 		},
 	}
-	s.jobs.Store(jobID, job)
+	s.storeJob(job)
 
 	// Return job info and detected schema
 	response := map[string]interface{}{
@@ -235,7 +303,7 @@ func (s *Server) handleConvert(w http.ResponseWriter, r *http.Request) {
 			Status:    "pending",
 			StartTime: time.Now(),
 		}
-		s.jobs.Store(req.JobID, job)
+		s.storeJob(job)
 	}
 
 	// Start conversion in background
@@ -256,12 +324,25 @@ func (s *Server) runConversion(job *Job, inputPath, compression string, runQuali
 		Message: "Starting conversion...",
 	}
 
+	// Broadcast progress via SSE
+	s.sseBroker.PublishProgress(job.ID, job.Progress)
+
+	// Update metrics
+	s.metrics.mu.Lock()
+	s.metrics.ConversionCount++
+	s.metrics.mu.Unlock()
+
 	opts := core.ConversionOptions{
 		Compression: compression,
 	}
 	if opts.Compression == "" {
 		opts.Compression = "snappy"
 	}
+
+	// Update progress
+	job.Progress.Percent = 30
+	job.Progress.Message = "Reading and converting data..."
+	s.sseBroker.PublishProgress(job.ID, job.Progress)
 
 	// Run conversion
 	result, err := s.converter.Convert(context.Background(), inputPath, opts)
@@ -270,8 +351,21 @@ func (s *Server) runConversion(job *Job, inputPath, compression string, runQuali
 		job.Error = err.Error()
 		now := time.Now()
 		job.EndTime = &now
+
+		s.metrics.mu.Lock()
+		s.metrics.ErrorCount++
+		s.metrics.mu.Unlock()
+
+		s.sseBroker.PublishError(job.ID, err)
 		return
 	}
+
+	// Update metrics with conversion results
+	s.metrics.mu.Lock()
+	s.metrics.TotalRowsWritten += result.RowCount
+	s.metrics.TotalBytesRead += result.InputSize
+	s.metrics.TotalBytesWritten += result.OutputSize
+	s.metrics.mu.Unlock()
 
 	job.Result = result
 	job.Progress = Progress{
@@ -285,7 +379,11 @@ func (s *Server) runConversion(job *Job, inputPath, compression string, runQuali
 	job.Analysis = make(map[string]interface{})
 
 	if runQuality {
+		job.Progress.Phase = "analyzing"
+		job.Progress.Percent = 90
 		job.Progress.Message = "Running quality analysis..."
+		s.sseBroker.PublishProgress(job.ID, job.Progress)
+
 		qualityPlugin, err := quality.NewPlugin()
 		if err == nil {
 			defer qualityPlugin.Close()
@@ -296,7 +394,11 @@ func (s *Server) runConversion(job *Job, inputPath, compression string, runQuali
 	}
 
 	if pmConfig != nil && pmConfig.CaseIDColumn != "" {
+		job.Progress.Phase = "analyzing"
+		job.Progress.Percent = 95
 		job.Progress.Message = "Running process mining analysis..."
+		s.sseBroker.PublishProgress(job.ID, job.Progress)
+
 		pmPlugin, err := processmining.NewPlugin(*pmConfig)
 		if err == nil {
 			defer pmPlugin.Close()
@@ -307,8 +409,16 @@ func (s *Server) runConversion(job *Job, inputPath, compression string, runQuali
 	}
 
 	job.Status = "completed"
+	job.Progress.Phase = "complete"
+	job.Progress.Percent = 100
+	job.Progress.Message = "Done"
 	now := time.Now()
 	job.EndTime = &now
+
+	// Persist final state
+	s.storeJob(job)
+
+	s.sseBroker.PublishComplete(job.ID, job)
 }
 
 // handleJob returns job status.
@@ -471,6 +581,94 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filepath.Base(job.Result.OutputPath)))
 	http.ServeFile(w, r, job.Result.OutputPath)
+}
+
+// handleHealth returns server health status.
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	health := map[string]interface{}{
+		"status":    "healthy",
+		"timestamp": time.Now().Format(time.RFC3339),
+		"uptime_seconds": int64(time.Since(s.startTime).Seconds()),
+		"version":   "1.0.0",
+	}
+	jsonResponse(w, health)
+}
+
+// handleMetrics returns server metrics.
+func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	s.metrics.mu.RLock()
+	defer s.metrics.mu.RUnlock()
+
+	// Count active jobs
+	var activeJobs, completedJobs, failedJobs int
+	s.jobs.Range(func(key, value interface{}) bool {
+		job := value.(*Job)
+		switch job.Status {
+		case "running":
+			activeJobs++
+		case "completed":
+			completedJobs++
+		case "failed":
+			failedJobs++
+		}
+		return true
+	})
+
+	// Get global telemetry metrics
+	globalMetrics := telemetry.Global().Snapshot()
+
+	metrics := map[string]interface{}{
+		"server": map[string]interface{}{
+			"uptime_seconds":   int64(time.Since(s.startTime).Seconds()),
+			"request_count":    s.metrics.RequestCount,
+			"error_count":      s.metrics.ErrorCount,
+		},
+		"conversions": map[string]interface{}{
+			"total":             s.metrics.ConversionCount,
+			"active":            activeJobs,
+			"completed":         completedJobs,
+			"failed":            failedJobs,
+			"total_rows":        s.metrics.TotalRowsWritten,
+			"total_bytes_read":  s.metrics.TotalBytesRead,
+			"total_bytes_written": s.metrics.TotalBytesWritten,
+		},
+		"pipeline": map[string]interface{}{
+			"rows_read":       globalMetrics.RowsRead,
+			"rows_written":    globalMetrics.RowsWritten,
+			"rows_skipped":    globalMetrics.RowsSkipped,
+			"bytes_read":      globalMetrics.BytesRead,
+			"bytes_written":   globalMetrics.BytesWritten,
+			"batches_read":    globalMetrics.BatchesRead,
+			"batches_written": globalMetrics.BatchesWritten,
+			"error_count":     globalMetrics.ErrorCount,
+			"rows_per_second": globalMetrics.RowsPerSecond,
+			"bytes_per_second": globalMetrics.BytesPerSecond,
+			"elapsed_seconds": globalMetrics.Elapsed.Seconds(),
+		},
+		"timestamp": time.Now().Format(time.RFC3339),
+	}
+
+	jsonResponse(w, metrics)
+}
+
+// handleJobs returns all jobs.
+func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request) {
+	var jobs []*Job
+	s.jobs.Range(func(key, value interface{}) bool {
+		jobs = append(jobs, value.(*Job))
+		return true
+	})
+
+	// Sort by start time (newest first)
+	for i := 0; i < len(jobs)-1; i++ {
+		for j := i + 1; j < len(jobs); j++ {
+			if jobs[j].StartTime.After(jobs[i].StartTime) {
+				jobs[i], jobs[j] = jobs[j], jobs[i]
+			}
+		}
+	}
+
+	jsonResponse(w, jobs)
 }
 
 // Helper functions
