@@ -1,211 +1,350 @@
-# LogFlow Architecture Document
+# LogFlow Architecture
 
-## Executive Summary
+## Module Map
 
-LogFlow is a high-performance, open-source CLI tool for converting process mining data (CSV, XES, JSON, OCEL) to Apache Parquet format. This document outlines the architectural decisions, research validation, and production-readiness assessment.
-
-## Research Validation
-
-### Sources Consulted
-- [Apache Arrow Official Documentation](https://arrow.apache.org/)
-- [DuckDB Zero-Copy Arrow Integration](https://duckdb.org/2021/12/03/duck-arrow)
-- [Go Concurrency Patterns: Pipelines](https://go.dev/blog/pipelines)
-- [IEEE XES Standard 1849-2023](https://www.tf-pm.org/)
-- [OCEL 2.0 Standard](https://www.tf-pm.org/)
-- [Parquet Performance Tuning](https://www.dremio.com/blog/tuning-parquet/)
-
----
-
-## Architectural Decisions
-
-### Decision 1: Hybrid Go + DuckDB Architecture
-
-**Choice:** Use Go for I/O and parsing, DuckDB for analytics.
-
-**Rationale:**
-- Go excels at concurrent I/O and streaming (goroutines + channels)
-- DuckDB provides SIMD-optimized vectorized execution
-- Zero-copy Arrow integration eliminates serialization overhead
-- [Research shows](https://medium.com/@tfmv/redefining-data-engineering-with-go-and-apache-arrow-df9059ddf55c) this hybrid approach achieves 10-100x speedup over pure Go
-
-**Validation:** ✅ Industry standard (used by Dremio, Polars ecosystem)
-
----
-
-### Decision 2: Pipeline Pattern (Filters & Pipes)
-
-**Choice:** Implement Unix-style pipeline architecture.
-
-**Rationale:**
-- Decouples concerns (Source → Processors → Sink)
-- Enables composition without code changes
-- Matches [official Go concurrency patterns](https://go.dev/blog/pipelines)
-- Allows parallel execution stages
-
-**Validation:** ✅ Official Go best practice
-
----
-
-### Decision 3: sync.Pool for Buffer Reuse
-
-**Choice:** Use sync.Pool to minimize heap allocations.
-
-**Rationale:**
-- [Research shows](https://wundergraph.com/blog/golang-sync-pool) 40% reduction in GC pause time
-- ~15% throughput increase in high-frequency scenarios
-- Critical for streaming large files with constant memory
-
-**Concerns Identified:**
-- ⚠️ Must reset objects before returning to pool
-- ⚠️ Variable-sized objects can cause memory bloat
-- ⚠️ Pool cleared on GC - don't rely on persistence
-
----
-
-### Decision 4: Apache Arrow Columnar Format
-
-**Choice:** Use Arrow as internal representation, Parquet for output.
-
-**Rationale:**
-- [Arrow provides](https://arrow.apache.org/) zero-copy data sharing
-- Columnar format enables SIMD operations
-- Direct integration with DuckDB (no serialization)
-- Industry standard for analytics workloads
-
-**Validation:** ✅ Used by Pandas, Spark, DuckDB, Polars
-
----
-
-### Decision 5: Context-Based Cancellation
-
-**Choice:** Use context.Context for lifecycle management.
-
-**Rationale:**
-- [Prevents goroutine leaks](https://dev.to/serifcolakel/go-concurrency-mastery-preventing-goroutine-leaks-with-context-timeout-cancellation-best-1lg0)
-- Enables timeout and deadline propagation
-- Standard Go pattern for cancellation
-
-**Concerns Identified:**
-- ⚠️ Must check ctx.Done() in all select statements
-- ⚠️ Must use buffered channels to prevent blocking on cancel
-- ⚠️ Should use errgroup for coordinated shutdown
-
----
-
-## Critical Improvements Needed
-
-### 1. Error Handling (HIGH PRIORITY)
-
-**Current State:** Basic error returns
-**Target State:** Production-grade error chain with context
-
-```go
-// Current (Bad)
-return err
-
-// Target (Good)
-return fmt.Errorf("parsing row %d: %w", lineNum, err)
+```
+logflow/
+├── cmd/                    # CLI entry points
+│   └── logflow/           # Main CLI application
+│
+├── internal/              # Private implementation details
+│   └── model/             # Core event model (Event, CaseID, Activity)
+│
+└── pkg/                   # Public, reusable packages
+    │
+    ├── ─────────────────── CORE LAYER ───────────────────
+    │
+    ├── pipeline/          # Event processing pipeline
+    │   ├── orchestrator_v2.go   # Production pipeline coordinator
+    │   ├── enterprise.go        # Enterprise wrapper (telemetry, resilience)
+    │   ├── dlq.go               # Dead letter queue for failed records
+    │   └── interfaces.go        # Source, Sink, Processor interfaces
+    │
+    ├── sources/           # Data input adapters
+    │   ├── csv.go              # CSV file reader
+    │   ├── json.go             # JSON/JSONL reader
+    │   └── xes.go              # XES (process mining standard) reader
+    │
+    ├── sinks/             # Data output adapters
+    │   └── parquet.go          # Parquet file writer
+    │
+    ├── ─────────────────── STORAGE LAYER ───────────────────
+    │
+    ├── storage/           # Storage abstraction
+    │   ├── cloud.go            # Unified storage interface
+    │   └── s3/                 # AWS S3 implementation
+    │       ├── s3.go           # Full S3 client
+    │       └── select.go       # S3 Select pushdown queries
+    │
+    ├── checkpoint/        # Resume capability
+    │   ├── checkpoint.go       # Local checkpoint manager
+    │   ├── backends.go         # Backend interface
+    │   ├── s3.go               # S3 checkpoint backend
+    │   └── redis.go            # Redis checkpoint backend
+    │
+    ├── ─────────────────── PROCESS MINING LAYER ───────────────────
+    │
+    ├── pmpt/              # Process Merkle Patricia Tree (Case-Centric)
+    │   ├── tree.go             # Core tree structure (O(1) comparison)
+    │   ├── interval.go         # Interval tree for time queries
+    │   ├── builder.go          # Incremental tree construction
+    │   └── hybrid.go           # Combined sequence + time queries
+    │
+    ├── ocel/              # Object-Centric Event Logs (OCEL 2.0)
+    │   ├── model.go            # OCEL 2.0 data types
+    │   ├── store.go            # DuckDB relational storage
+    │   ├── import.go           # Import from CSV/JSON/XML
+    │   ├── export.go           # Export to OCEL standard formats
+    │   └── discovery.go        # OC-DFG discovery algorithm
+    │
+    ├── ─────────────────── QUALITY LAYER ───────────────────
+    │
+    ├── validation/        # Data validation
+    │   └── quality/            # Quality rules engine
+    │       └── rules.go        # Configurable validation rules
+    │
+    ├── parser/            # Parsing utilities
+    │   └── healing/            # Self-healing parser
+    │       ├── rules.go        # Fix rules (encoding, quoting, etc.)
+    │       ├── detector.go     # Error pattern detection
+    │       └── fixer.go        # Auto-repair wrapper
+    │
+    ├── ─────────────────── OPERATIONS LAYER ───────────────────
+    │
+    ├── telemetry/         # Observability
+    │   ├── telemetry.go        # Tracer, Metrics, Spans
+    │   └── otel.go             # OpenTelemetry OTLP export
+    │
+    ├── resilience/        # Fault tolerance
+    │   └── resilience.go       # Circuit breaker, poison pill handler
+    │
+    ├── lifecycle/         # Process lifecycle
+    │   └── shutdown.go         # Graceful shutdown manager
+    │
+    └── errors/            # Error handling
+        └── errors.go           # Typed errors with codes
 ```
 
-**Actions:**
-- [ ] Implement custom error types with stack traces
-- [ ] Add error codes for programmatic handling
-- [ ] Wrap all errors with context
+---
+
+## Layer Dependencies
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        CLI (cmd/)                           │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    CORE LAYER                               │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐          │
+│  │  Pipeline   │──│   Sources   │──│    Sinks    │          │
+│  │ Orchestrator│  │  (CSV,JSON) │  │  (Parquet)  │          │
+│  └─────────────┘  └─────────────┘  └─────────────┘          │
+└─────────────────────────────────────────────────────────────┘
+         │                   │                    │
+         ▼                   ▼                    ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   STORAGE LAYER                             │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐          │
+│  │   Storage   │  │ Checkpoint  │  │   DuckDB    │          │
+│  │ (Local, S3) │  │(Local,S3,Redis)│ │  (OCEL)    │          │
+│  └─────────────┘  └─────────────┘  └─────────────┘          │
+└─────────────────────────────────────────────────────────────┘
+         │                   │                    │
+         ▼                   ▼                    ▼
+┌─────────────────────────────────────────────────────────────┐
+│                PROCESS MINING LAYER                         │
+│  ┌─────────────┐  ┌─────────────┐                           │
+│  │    PMPT     │  │    OCEL     │                           │
+│  │(Case-Centric)│ │(Object-Centric)│                        │
+│  └─────────────┘  └─────────────┘                           │
+└─────────────────────────────────────────────────────────────┘
+         │                   │
+         ▼                   ▼
+┌─────────────────────────────────────────────────────────────┐
+│                  QUALITY LAYER                              │
+│  ┌─────────────┐  ┌─────────────┐                           │
+│  │ Validation  │  │   Healing   │                           │
+│  │   Rules     │  │   Parser    │                           │
+│  └─────────────┘  └─────────────┘                           │
+└─────────────────────────────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────────────────────────────┐
+│                 OPERATIONS LAYER                            │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐          │
+│  │  Telemetry  │  │ Resilience  │  │  Lifecycle  │          │
+│  │   (OTLP)    │  │(CircuitBrkr)│  │ (Shutdown)  │          │
+│  └─────────────┘  └─────────────┘  └─────────────┘          │
+└─────────────────────────────────────────────────────────────┘
+```
 
 ---
 
-### 2. Goroutine Leak Prevention (HIGH PRIORITY)
+## Module Contracts (Interfaces)
 
-**Current State:** Basic context cancellation
-**Target State:** errgroup with coordinated shutdown
+### Pipeline (`pkg/pipeline/`)
 
-**Actions:**
-- [ ] Replace manual WaitGroup with errgroup.WithContext
-- [ ] Add buffered channels (size 1) for all sends
-- [ ] Implement goleak testing
+```go
+// Source reads events from an input
+type Source interface {
+    Name() string
+    Read(ctx context.Context, r io.Reader, out chan<- *Event) error
+}
 
----
+// Sink writes events to an output
+type Sink interface {
+    Name() string
+    Write(ctx context.Context, in <-chan *Event) error
+    Close() error
+}
 
-### 3. Row Group Size (MEDIUM PRIORITY)
+// Processor transforms events in a pipeline stage
+type Processor interface {
+    Name() string
+    Process(ctx context.Context, in <-chan *Event, out chan<- *Event) error
+}
 
-**Current State:** 64KB row groups
-**Target State:** 128MB (Parquet default)
+// Inspector observes events without modifying (read-only)
+type Inspector interface {
+    Name() string
+    Inspect(event *Event)
+    Report() interface{}
+}
+```
 
-**Rationale:** [Research shows](https://medium.com/data-engineering-with-dremio/all-about-parquet-part-10-performance-tuning-and-best-practices-with-parquet-d697ba4e8a57) larger row groups reduce I/O overhead and improve compression.
+### Storage (`pkg/storage/`)
 
----
+```go
+type Storage interface {
+    Reader(ctx context.Context, path string) (io.ReadCloser, int64, error)
+    Writer(ctx context.Context, path string) (io.WriteCloser, error)
+    Stat(ctx context.Context, path string) (*FileInfo, error)
+    Scheme() string  // "file", "s3", "gs", "az"
+}
+```
 
-### 4. OCEL 2.0 Support (MEDIUM PRIORITY)
+### Checkpoint (`pkg/checkpoint/`)
 
-**Current State:** XES and flat CSV only
-**Target State:** Full OCEL 2.0 support
-
-**Rationale:** [OCEL 2.0](https://www.tf-pm.org/) is the future of process mining, supporting multi-object event logs.
-
----
-
-### 5. Observability (LOW PRIORITY for MVP)
-
-**Current State:** No telemetry
-**Target State:** OpenTelemetry integration
-
-**Actions:**
-- [ ] Add optional metrics (events/sec, memory usage)
-- [ ] Add tracing for debugging
-- [ ] Add structured logging
-
----
-
-## Performance Targets
-
-| Metric | Target | Validation |
-|--------|--------|------------|
-| Throughput | >100K events/sec | Benchmark on 1M events |
-| Memory | <100MB for any file size | Profile with pprof |
-| Startup | <100ms | Measure cold start |
-| Compression | >5x vs CSV | Compare file sizes |
-
----
-
-## Security Considerations
-
-1. **Input Validation:** All parsers must handle malformed input without panic
-2. **Path Traversal:** Sanitize all file paths
-3. **Memory Limits:** Cap buffer sizes to prevent DoS
-4. **Anonymization:** Use cryptographically secure hashing (SHA-256)
+```go
+type Backend interface {
+    Save(ctx context.Context, cp *Checkpoint) error
+    Load(ctx context.Context, id string) (*Checkpoint, error)
+    Delete(ctx context.Context, id string) error
+    List(ctx context.Context, prefix string) ([]*Checkpoint, error)
+    Name() string  // "local", "s3", "redis"
+}
+```
 
 ---
 
-## Testing Strategy
+## OCEL 2.0 Module (Object-Centric Process Mining)
 
-1. **Golden File Tests:** Verify output correctness
-2. **Fuzz Testing:** `go test -fuzz` for parser robustness
-3. **Benchmark Tests:** `go test -bench` for performance regression
-4. **Leak Detection:** goleak for goroutine leaks
-5. **Integration Tests:** Round-trip with PM4Py/DuckDB
+### Why DuckDB Instead of Parquet Nested Types?
+
+OCEL 2.0 requires:
+1. **E2O relations with qualifiers** - ternary relation (event, qualifier, object)
+2. **O2O relations** - object-to-object links
+3. **Versioned object attributes** - attributes change over time
+
+Parquet nested LIST can store `Event → [ObjectID]` but **cannot express**:
+- Qualifiers on relationships ("primary", "resource")
+- Object-to-object relations
+- Temporal attribute versioning
+
+**DuckDB** provides:
+- In-process SQL engine (already a dependency)
+- Native Parquet export for analytics
+- Relational model matching OCEL 2.0 spec exactly
+
+### OCEL 2.0 Mathematical Model
+
+```
+L = (E, O, EA, OA, evtype, time, objtype, eatype, oatype, eaval, oaval, E2O, O2O)
+
+Where:
+- E ⊆ 𝕌_ev           : Set of events
+- O ⊆ 𝕌_obj          : Set of objects
+- E2O ⊆ E × 𝕌_qual × O : Event-to-Object relations (qualified)
+- O2O ⊆ O × 𝕌_qual × O : Object-to-Object relations (qualified)
+```
+
+### DuckDB Schema (OCEL 2.0 Compliant)
+
+```sql
+-- Events
+CREATE TABLE event (
+    event_id    VARCHAR PRIMARY KEY,
+    event_type  VARCHAR NOT NULL,
+    timestamp   TIMESTAMP NOT NULL
+);
+
+-- Objects
+CREATE TABLE object (
+    object_id   VARCHAR PRIMARY KEY,
+    object_type VARCHAR NOT NULL
+);
+
+-- Event-to-Object (E2O) with qualifier
+CREATE TABLE event_object (
+    event_id    VARCHAR,
+    object_id   VARCHAR,
+    qualifier   VARCHAR,
+    PRIMARY KEY (event_id, object_id, qualifier)
+);
+
+-- Object-to-Object (O2O) with qualifier
+CREATE TABLE object_object (
+    source_id   VARCHAR,
+    target_id   VARCHAR,
+    qualifier   VARCHAR,
+    PRIMARY KEY (source_id, target_id, qualifier)
+);
+
+-- Object attributes (versioned - attributes change over time)
+CREATE TABLE object_attribute (
+    object_id   VARCHAR,
+    attr_name   VARCHAR,
+    attr_value  VARCHAR,
+    attr_type   VARCHAR,
+    timestamp   TIMESTAMP,
+    PRIMARY KEY (object_id, attr_name, timestamp)
+);
+```
 
 ---
 
-## Future Roadmap
+## Usage Examples
 
-### Phase 1 (MVP) ✅
-- CSV, XES, JSONL parsing
-- Parquet output
-- Basic CLI
+### 1. Basic Pipeline (Case-Centric)
 
-### Phase 2 (Current)
-- Pipeline architecture
-- Quality inspection
-- Sampling & anonymization
-- PowerBI export
+```go
+pipeline := pipeline.NewOrchestratorV2(cfg).
+    SetSource(sources.NewCSVSource()).
+    AddProcessor(transforms.NewFilterProcessor(filter)).
+    SetSink(sinks.NewParquetSink(parquetCfg))
 
-### Phase 3 (Next)
-- OCEL 2.0 support
-- Excel parsing
-- SQL source adapter
-- Arrow Flight server
+err := pipeline.Run(ctx)
+```
 
-### Phase 4 (Future)
-- Web UI
-- Cloud storage (S3, GCS)
-- Distributed processing
+### 2. Enterprise Pipeline (Production)
+
+```go
+enterprise, _ := pipeline.NewEnterpriseOrchestrator(pipeline.EnterpriseConfig{
+    ServiceName:    "logflow",
+    OTLPEndpoint:   "localhost:4317",
+    CheckpointDir:  "/tmp/checkpoints",
+    DLQPath:        "/tmp/dlq",
+})
+
+enterprise.SetSource(sources.NewCSVSource()).SetSink(sinks.NewParquetSink(cfg))
+enterprise.HandleSignals(ctx)
+err := enterprise.Run(ctx)
+```
+
+### 3. OCEL 2.0 (Object-Centric)
+
+```go
+// Create OCEL store
+store, _ := ocel.NewStore("process.ocel.db")
+
+// Import with object mapping
+importer := ocel.NewImporter(store)
+importer.ImportCSV(ctx, reader, ocel.CSVMapping{
+    EventID:   "event_id",
+    Activity:  "activity",
+    Timestamp: "timestamp",
+    Objects: map[string]string{
+        "order_id":    "Order",
+        "customer_id": "Customer",
+    },
+})
+
+// Discover Object-Centric DFG
+dfg := store.DiscoverOCDFG()
+
+// Project to traditional case-centric view
+orderLog := store.ProjectByObjectType("Order")
+```
+
+---
+
+## Adding New Modules
+
+| To Add | Implement | Location |
+|--------|-----------|----------|
+| New data source | `Source` interface | `pkg/sources/` |
+| New output format | `Sink` interface | `pkg/sinks/` |
+| New transformation | `Processor` interface | `pkg/pipeline/` |
+| New storage backend | `Storage` interface | `pkg/storage/` |
+| New checkpoint backend | `Backend` interface | `pkg/checkpoint/` |
+
+---
+
+## Research References
+
+- [OCEL 2.0 Specification](https://arxiv.org/html/2403.01975v1)
+- [Apache Arrow Parquet Nested Types](https://arrow.apache.org/blog/2022/10/17/arrow-parquet-encoding-part-3/)
+- [Go Concurrency Patterns: Pipelines](https://go.dev/blog/pipelines)
+- [DuckDB Zero-Copy Arrow Integration](https://duckdb.org/2021/12/03/duck-arrow)
