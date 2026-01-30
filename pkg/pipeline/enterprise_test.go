@@ -326,7 +326,7 @@ func TestCheckpointManagerFail(t *testing.T) {
 	cm, _ := NewCheckpointManager(dir)
 	_ = cm.Create("job1", "input.csv")
 
-	cm.Fail("job1", nil)
+	cm.Fail("job1", context.DeadlineExceeded)
 
 	cp := cm.Get("job1")
 	if cp.Status != CheckpointStatusFailed {
