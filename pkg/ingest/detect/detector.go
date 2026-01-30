@@ -193,13 +193,14 @@ func (d *Detector) AnalyzePath(path string) (*Analysis, error) {
 		!analysis.HasRaggedRows &&
 		!analysis.HasEmbeddedNewlines
 
-	// Select strategy
-	analysis.RecommendedStrategy, analysis.Confidence = selectStrategy(analysis)
+	// Select strategy using pluggable rule engine
+	analysis.RecommendedStrategy, analysis.Confidence = EvaluateRules(analysis)
 
 	return analysis, nil
 }
 
 // selectStrategy determines the optimal strategy.
+// Deprecated: use EvaluateRules() instead. Kept for reference.
 func selectStrategy(a *Analysis) (Strategy, float64) {
 	// Large files need streaming
 	if a.Size > 2*1024*1024*1024 {
