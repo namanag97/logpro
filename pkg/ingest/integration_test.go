@@ -973,7 +973,7 @@ func TestFullPipelineIntegration(t *testing.T) {
 				// not available in all builds (JSON extension for read_json_auto,
 				// and gzip CSV where the detector can't analyze compressed bytes).
 				switch spec.key {
-				case "json", "jsonl", "jsonl_gz":
+				case "json", "jsonl", "jsonl_gz", "csv_gz":
 					opts.ForceStrategy = StrategyRobustGo
 				}
 
