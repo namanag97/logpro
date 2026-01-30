@@ -87,7 +87,7 @@ func TestParquetSink_Create(t *testing.T) {
 	tmp := t.TempDir()
 	cfg := pipeline.DefaultConfig()
 	cfg.SinkPath = filepath.Join(tmp, "out.parquet")
-	s, err := sinks.NewParquetSink(cfg)
+	s, err := adapters.NewParquetSink(cfg)
 	if err != nil {
 		t.Fatalf("NewParquetSink: %v", err)
 	}
@@ -145,7 +145,7 @@ func TestParquetSink_WriteEvents(t *testing.T) {
 	tmp := t.TempDir()
 	cfg := pipeline.DefaultConfig()
 	cfg.SinkPath = filepath.Join(tmp, "out.parquet")
-	s, err := sinks.NewParquetSink(cfg)
+	s, err := adapters.NewParquetSink(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
