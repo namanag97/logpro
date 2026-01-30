@@ -139,10 +139,21 @@ func TestNewParserUnknown(t *testing.T) {
 
 // --- CSVParser tests ---
 
+func csvConfig() Config {
+	cfg := DefaultConfig()
+	cfg.ColumnMapping = map[string]string{
+		"case_id":   "case_id",
+		"activity":  "activity",
+		"timestamp": "timestamp",
+		"resource":  "resource",
+	}
+	return cfg
+}
+
 func TestCSVParserBasic(t *testing.T) {
 	input := "case_id,activity,timestamp,resource\nc1,A,2024-01-01T10:00:00Z,Alice\nc2,B,2024-01-01T11:00:00Z,Bob\n"
 
-	p := NewCSVParser(DefaultConfig())
+	p := NewCSVParser(csvConfig())
 	out := make(chan *model.Event, 100)
 	ctx := context.Background()
 
