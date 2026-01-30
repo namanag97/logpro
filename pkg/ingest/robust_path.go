@@ -618,14 +618,14 @@ func (r *RobustPath) appendRecord(builders []array.Builder, types []ColumnType, 
 
 		switch types[i] {
 		case TypeInt64:
-			// strconv.ParseInt accepts string — use unsafe-free conversion via byte-backed string
-			if v, err := strconv.ParseInt(string(trimmed), 10, 64); err == nil {
+			// bytesToString avoids allocation for the strconv parse call
+			if v, err := strconv.ParseInt(bytesToString(trimmed), 10, 64); err == nil {
 				builder.(*array.Int64Builder).Append(v)
 			} else {
 				builder.AppendNull()
 			}
 		case TypeFloat64:
-			if v, err := strconv.ParseFloat(string(trimmed), 64); err == nil {
+			if v, err := strconv.ParseFloat(bytesToString(trimmed), 64); err == nil {
 				builder.(*array.Float64Builder).Append(v)
 			} else {
 				builder.AppendNull()
@@ -644,16 +644,16 @@ func (r *RobustPath) appendRecord(builders []array.Builder, types []ColumnType, 
 				builder.AppendNull()
 			}
 		case TypeTimestamp:
-			s := string(trimmed)
+			s := bytesToString(trimmed)
 			if t, idx := r.parseTimestampCached(s, tsFormatIdx[i]); !t.IsZero() {
 				builder.(*array.TimestampBuilder).Append(arrow.Timestamp(t.UnixMicro()))
-				tsFormatIdx[i] = idx // lock format for this column
+				tsFormatIdx[i] = idx
 			} else {
 				builder.AppendNull()
 			}
 		default:
-			// For strings: use unsafe-free conversion; Go 1.20+ optimises string([]byte) in many contexts
-			builder.(*array.StringBuilder).Append(string(trimmed))
+			// StringBuilder.Append copies internally, so bytesToString is safe here
+			builder.(*array.StringBuilder).Append(bytesToString(trimmed))
 		}
 	}
 }
