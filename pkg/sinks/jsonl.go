@@ -9,12 +9,7 @@ import (
 	"path/filepath"
 
 	"github.com/logflow/logflow/pkg/pipeline"
-	"github.com/logflow/logflow/pkg/registry"
 )
-
-func init() {
-	registry.RegisterSink("jsonl", JSONLSinkFactory)
-}
 
 // JSONLSink writes events as newline-delimited JSON.
 type JSONLSink struct {
