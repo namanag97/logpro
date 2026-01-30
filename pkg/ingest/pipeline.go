@@ -21,6 +21,12 @@ type Pipeline struct {
 	robustPath *RobustPath
 	heuristics *HeuristicEngine
 
+	// Enhanced detection (from pkg/ingest/detect)
+	advDetector *detect.Detector
+
+	// Flow control (from pkg/ingest/flow)
+	concLimiter *flow.ConcurrencyLimiter
+
 	// Configuration
 	config *UnifiedConfig
 
