@@ -378,11 +378,11 @@ func (s *IcebergSink) closeCurrentFile() error {
 		return err
 	}
 
-	// Add to data files list
+	// Add to data files list — use actual totalRows, not estimated batchCount * batchSize
 	s.dataFiles = append(s.dataFiles, DataFile{
 		FilePath:      "data/" + filepath.Base(s.currentPath),
 		FileFormat:    "PARQUET",
-		RecordCount:   int64(s.batchCount * s.cfg.BatchSize),
+		RecordCount:   s.totalRows,
 		FileSizeBytes: info.Size(),
 	})
 
