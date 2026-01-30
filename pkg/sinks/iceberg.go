@@ -541,11 +541,10 @@ func (s *IcebergSink) Close() error {
 		return nil
 	}
 
-	// Release builders
-	s.caseIDBuilder.Release()
-	s.activityBuilder.Release()
-	s.timestampBuilder.Release()
-	s.resourceBuilder.Release()
+	// Release all dynamic builders
+	for _, b := range s.builders {
+		b.Release()
+	}
 
 	s.closed = true
 	return nil
