@@ -476,53 +476,62 @@ builders[i] = array.NewStringBuilder(alloc)
 return builders
 }
 
-// appendRecord adds a record to builders.
-func (r *RobustPath) appendRecord(builders []array.Builder, types []ColumnType, fields [][]byte, headers [][]byte) {
-for i, builder := range builders {
-var value []byte
-if i < len(fields) {
-value = fields[i]
-}
+// appendRecord adds a record to builders. It uses the pre-computed
+// tsFormatIdx cache so that timestamp columns don't try all formats every row.
+func (r *RobustPath) appendRecord(builders []array.Builder, types []ColumnType, fields [][]byte, headers [][]byte, tsFormatIdx []int) {
+	for i, builder := range builders {
+		var value []byte
+		if i < len(fields) {
+			value = fields[i]
+		}
 
-if len(value) == 0 || r.isNullValue(value) {
-builder.AppendNull()
-continue
-}
+		if len(value) == 0 || r.isNullValue(value) {
+			builder.AppendNull()
+			continue
+		}
 
-s := string(bytes.TrimSpace(value))
+		trimmed := bytes.TrimSpace(value)
 
-switch types[i] {
-case TypeInt64:
-if v, err := strconv.ParseInt(s, 10, 64); err == nil {
-builder.(*array.Int64Builder).Append(v)
-} else {
-builder.AppendNull()
-}
-case TypeFloat64:
-if v, err := strconv.ParseFloat(s, 64); err == nil {
-builder.(*array.Float64Builder).Append(v)
-} else {
-builder.AppendNull()
-}
-case TypeBool:
-switch s {
-case "true", "True", "TRUE", "1", "yes":
-builder.(*array.BooleanBuilder).Append(true)
-case "false", "False", "FALSE", "0", "no":
-builder.(*array.BooleanBuilder).Append(false)
-default:
-builder.AppendNull()
-}
-case TypeTimestamp:
-if t := r.parseTimestamp(s); !t.IsZero() {
-builder.(*array.TimestampBuilder).Append(arrow.Timestamp(t.UnixMicro()))
-} else {
-builder.AppendNull()
-}
-default:
-builder.(*array.StringBuilder).Append(s)
-}
-}
+		switch types[i] {
+		case TypeInt64:
+			// strconv.ParseInt accepts string — use unsafe-free conversion via byte-backed string
+			if v, err := strconv.ParseInt(string(trimmed), 10, 64); err == nil {
+				builder.(*array.Int64Builder).Append(v)
+			} else {
+				builder.AppendNull()
+			}
+		case TypeFloat64:
+			if v, err := strconv.ParseFloat(string(trimmed), 64); err == nil {
+				builder.(*array.Float64Builder).Append(v)
+			} else {
+				builder.AppendNull()
+			}
+		case TypeBool:
+			if len(trimmed) == 0 {
+				builder.AppendNull()
+				continue
+			}
+			switch trimmed[0] {
+			case 't', 'T', '1', 'y', 'Y':
+				builder.(*array.BooleanBuilder).Append(true)
+			case 'f', 'F', '0', 'n', 'N':
+				builder.(*array.BooleanBuilder).Append(false)
+			default:
+				builder.AppendNull()
+			}
+		case TypeTimestamp:
+			s := string(trimmed)
+			if t, idx := r.parseTimestampCached(s, tsFormatIdx[i]); !t.IsZero() {
+				builder.(*array.TimestampBuilder).Append(arrow.Timestamp(t.UnixMicro()))
+				tsFormatIdx[i] = idx // lock format for this column
+			} else {
+				builder.AppendNull()
+			}
+		default:
+			// For strings: use unsafe-free conversion; Go 1.20+ optimises string([]byte) in many contexts
+			builder.(*array.StringBuilder).Append(string(trimmed))
+		}
+	}
 }
 
 // nullValues holds the canonical null representations as byte slices to avoid
