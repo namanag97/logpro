@@ -264,7 +264,7 @@ func TestWorkerPoolSubmit(t *testing.T) {
 		}
 	}
 
-	p.Wait()
+	// Close shuts down workers and waits for completion
 	p.Close()
 
 	if count != 100 {
