@@ -268,13 +268,10 @@ func runConvert(cmd *cobra.Command, args []string) error {
 	// Generate data contract if requested
 	if generateContract {
 		cfg := contract.ContractConfig{
-			CaseIDColumn:    csvCaseIDColumn,
-			ActivityColumn:  csvActivityColumn,
-			TimestampColumn: csvTimestampColumn,
-			ResourceColumn:  csvResourceColumn,
-			NullTolerance:   0.05,
-			TimestampOrder:  "asc",
-			ToolVersion:     version,
+			ColumnMapping:  buildColumnMapping(),
+			NullTolerance:  0.05,
+			TimestampOrder: "asc",
+			ToolVersion:    version,
 		}
 
 		c, err := contract.Generate(outputFile, result.RowsWritten, cfg)
