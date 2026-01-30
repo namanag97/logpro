@@ -20,6 +20,7 @@ type CSVSource struct {
 	bufferPool   *pool.BufferPool
 	eventPool    *pool.EventPool
 	delimiter    byte
+	scanner      *parser.CSVScanner
 	errorHandler *pipeline.ErrorHandler
 
 	// Column indices (resolved from header)
