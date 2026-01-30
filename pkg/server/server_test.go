@@ -1,15 +1,19 @@
 package server
 
 import (
+	"embed"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 )
 
+// emptyFS is an empty embedded filesystem for testing
+var emptyFS embed.FS
+
 func newTestServer(t *testing.T) *Server {
 	t.Helper()
-	s, err := NewServer(staticFS)
+	s, err := NewServer(emptyFS)
 	if err != nil {
 		t.Fatalf("NewServer failed: %v", err)
 	}
