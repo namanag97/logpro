@@ -18,10 +18,10 @@ import (
 	"github.com/apache/arrow/go/v14/arrow/array"
 	"github.com/apache/arrow/go/v14/arrow/memory"
 	"github.com/apache/arrow/go/v14/parquet"
-	"github.com/apache/arrow/go/v14/parquet/compress"
 	"github.com/apache/arrow/go/v14/parquet/pqarrow"
 
 	"github.com/logflow/logflow/pkg/pipeline"
+	"github.com/logflow/logflow/pkg/writer"
 )
 
 // IcebergSink writes events to an Apache Iceberg table.
