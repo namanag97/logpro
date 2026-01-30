@@ -268,33 +268,96 @@ return line, err
 }
 }
 
-// parseCSVLine parses a CSV line into fields.
+// csvFieldsBuf is a reusable buffer for parseCSVLine results.
+// It holds pre-allocated slices to avoid per-row allocations.
+type csvFieldsBuf struct {
+	fields [][]byte // reusable output slice
+	tmp    []byte   // scratch buffer for fields that need unquoting
+}
+
+// parseCSVLineInto parses a CSV line into the reusable buf, returning the fields.
+// For fields that don't contain escaped quotes, it returns sub-slices of line
+// (zero allocation). Only fields with escaped quotes are copied into buf.tmp.
+func (r *RobustPath) parseCSVLineInto(buf *csvFieldsBuf, line []byte, delim, quote byte) [][]byte {
+	buf.fields = buf.fields[:0]
+	buf.tmp = buf.tmp[:0]
+
+	inQuote := false
+	hasEscape := false
+	fieldStart := 0
+	isQuoted := false
+
+	for i := 0; i <= len(line); i++ {
+		if i == len(line) || (line[i] == delim && !inQuote) {
+			// End of field
+			start := fieldStart
+			end := i
+
+			if isQuoted && end > start+1 && line[start] == quote {
+				start++ // skip opening quote
+				if end > 0 && line[end-1] == quote {
+					end-- // skip closing quote
+				}
+			}
+
+			if hasEscape {
+				// Must copy with unescaping
+				tmpStart := len(buf.tmp)
+				for j := start; j < end; j++ {
+					if line[j] == quote && j+1 < end && line[j+1] == quote {
+						buf.tmp = append(buf.tmp, quote)
+						j++ // skip second quote
+					} else {
+						buf.tmp = append(buf.tmp, line[j])
+					}
+				}
+				field := make([]byte, len(buf.tmp)-tmpStart)
+				copy(field, buf.tmp[tmpStart:])
+				buf.fields = append(buf.fields, field)
+			} else {
+				// Zero-copy: sub-slice of line
+				buf.fields = append(buf.fields, line[start:end])
+			}
+
+			if i < len(line) {
+				fieldStart = i + 1
+				isQuoted = false
+				hasEscape = false
+			}
+			continue
+		}
+
+		b := line[i]
+		if b == quote {
+			if !inQuote {
+				if i == fieldStart {
+					isQuoted = true
+				}
+				inQuote = true
+			} else if i+1 < len(line) && line[i+1] == quote {
+				hasEscape = true
+				i++ // skip paired quote
+			} else {
+				inQuote = false
+			}
+		}
+	}
+
+	return buf.fields
+}
+
+// parseCSVLine parses a CSV line into fields (allocating version for sample phase).
 func (r *RobustPath) parseCSVLine(line []byte, delim, quote byte) [][]byte {
-var fields [][]byte
-var field []byte
-inQuote := false
-
-for i := 0; i < len(line); i++ {
-b := line[i]
-
-if b == quote {
-if inQuote && i+1 < len(line) && line[i+1] == quote {
-// Escaped quote
-field = append(field, quote)
-i++
-} else {
-inQuote = !inQuote
-}
-} else if b == delim && !inQuote {
-fields = append(fields, field)
-field = nil
-} else {
-field = append(field, b)
-}
-}
-
-fields = append(fields, field)
-return fields
+	var buf csvFieldsBuf
+	result := r.parseCSVLineInto(&buf, line, delim, quote)
+	// Copy to owned slices since buf may be reused
+	out := make([][]byte, len(result))
+	for i, f := range result {
+		cp := make([]byte, len(f))
+		copy(cp, f)
+		out[i] = cp
+	}
+	return out
 }
 
 // parseCSVLineRobust parses with error recovery.
