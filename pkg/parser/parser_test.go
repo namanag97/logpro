@@ -316,7 +316,7 @@ func TestJSONLParserBasic(t *testing.T) {
 {"case_id":"c2","activity":"B","timestamp":"2024-01-01T11:00:00Z","resource":"Bob"}
 `
 
-	p := NewJSONLParser(DefaultConfig())
+	p := NewJSONLParser(csvConfig())
 	out := make(chan *model.Event, 100)
 
 	go func() {
