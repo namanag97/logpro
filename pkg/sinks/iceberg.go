@@ -25,8 +25,8 @@ import (
 )
 
 // IcebergSink writes events to an Apache Iceberg table.
-// It supports both fixed process-mining schemas and dynamic schemas passed via
-// SetSchema(). When no schema is set, it defaults to the legacy 4-column layout.
+// Use NewIcebergSinkWithSchema() to provide any Arrow schema.
+// NewIcebergSink() defaults to the 4-column process-mining layout.
 type IcebergSink struct {
 	cfg       pipeline.Config
 	tableDir  string
