@@ -45,19 +45,9 @@ func benchFormat(b *testing.B, key string, noisy bool) {
 	var inputSize int64
 	var rowCount int
 
-	// Setup: generate test file
+	// Setup: generate test file directly (not via formatSpec.setup which needs *testing.T)
 	b.StopTimer()
 	{
-		// Create a minimal *testing.T-compatible context for setup.
-		// We use b.Run internally just to get a *testing.T, but really
-		// we only need the file path. Use a helper approach instead.
-		t := &testing.T{} // zero-value is not usable for Fatal, so we handle errors differently
-		setupDone := false
-
-		// We'll use a sub-benchmark just for setup to get a proper testing context.
-		// Actually, formatSpec.setup uses t.Fatalf which we can't avoid.
-		// Instead, let's generate files directly for benchmark-supported formats.
-
 		rows := 1000
 		if noisy {
 			rows = 2000
