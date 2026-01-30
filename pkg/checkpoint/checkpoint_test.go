@@ -330,7 +330,10 @@ func TestLocalBackendFindByInput(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	_ = b.Save(ctx, &Checkpoint{ID: "j1", InputPath: "/data/file.csv", Phase: "reading"})
+	mgr, _ := NewManager(dir)
+	cp := mgr.Create("j1", "/data/file.csv", "out.parquet")
+	cp.Update(100, 50)
+	_ = b.Save(ctx, cp)
 
 	found, err := b.FindByInput(ctx, "/data/file.csv")
 	if err != nil {
