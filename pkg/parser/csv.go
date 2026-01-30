@@ -270,8 +270,8 @@ func (p *CSVParser) parseTimestamp(ts []byte) (int64, error) {
 	return 0, ErrInvalidTimestamp
 }
 
-// trimLineEnding removes trailing \n and \r characters.
-func trimLineEnding(line []byte) []byte {
+// TrimLineEnding removes trailing \n and \r characters.
+func TrimLineEnding(line []byte) []byte {
 	for len(line) > 0 && (line[len(line)-1] == '\n' || line[len(line)-1] == '\r') {
 		line = line[:len(line)-1]
 	}
