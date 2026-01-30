@@ -160,10 +160,20 @@ func benchFormat(b *testing.B, key string, noisy bool) {
 	}
 	defer engine.Close()
 
+	// Force RobustGo for formats needing DuckDB extensions not always available
+	var forceStrategy Strategy
+	switch key {
+	case "json", "jsonl", "jsonl_gz", "csv_gz":
+		forceStrategy = StrategyRobustGo
+	}
+
 	for i := 0; i < b.N; i++ {
 		outputPath := filepath.Join(dir, fmt.Sprintf("output_%d.parquet", i))
 		opts := DefaultOptions()
 		opts.OutputPath = outputPath
+		if forceStrategy != 0 {
+			opts.ForceStrategy = forceStrategy
+		}
 
 		start := time.Now()
 		result, err := engine.Ingest(context.Background(), inputPath, opts)
