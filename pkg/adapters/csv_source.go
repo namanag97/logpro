@@ -285,58 +285,6 @@ func (s *CSVSource) getMissingColumns() []string {
 	return missing
 }
 
-// parseLine parses a CSV line into fields using state machine.
-func (s *CSVSource) parseLine(line []byte) [][]byte {
-	if len(line) == 0 {
-		return nil
-	}
-
-	fields := make([][]byte, 0, 16)
-	delim := s.delimiter
-	start := 0
-	inQuotes := false
-
-	for i := 0; i < len(line); i++ {
-		c := line[i]
-
-		if c == '"' {
-			if !inQuotes {
-				inQuotes = true
-			} else if i+1 < len(line) && line[i+1] == '"' {
-				i++ // Skip escaped quote
-			} else {
-				inQuotes = false
-			}
-		} else if c == delim && !inQuotes {
-			fields = append(fields, unquote(line[start:i]))
-			start = i + 1
-		}
-	}
-
-	// Last field
-	fields = append(fields, unquote(line[start:]))
-	return fields
-}
-
-// unquote removes surrounding quotes from a field.
-func unquote(field []byte) []byte {
-	if len(field) < 2 {
-		return field
-	}
-	if field[0] == '"' && field[len(field)-1] == '"' {
-		return field[1 : len(field)-1]
-	}
-	return field
-}
-
-// trimLineEnding removes trailing CR/LF.
-func trimLineEnding(line []byte) []byte {
-	for len(line) > 0 && (line[len(line)-1] == '\n' || line[len(line)-1] == '\r') {
-		line = line[:len(line)-1]
-	}
-	return line
-}
-
 // ColumnError indicates missing or invalid columns.
 type ColumnError struct {
 	Message string
