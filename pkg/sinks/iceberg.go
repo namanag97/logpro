@@ -22,7 +22,12 @@ import (
 	"github.com/apache/arrow/go/v14/parquet/pqarrow"
 
 	"github.com/logflow/logflow/pkg/pipeline"
+	"github.com/logflow/logflow/pkg/registry"
 )
+
+func init() {
+	registry.RegisterSink("iceberg", IcebergSinkFactory)
+}
 
 // IcebergSink writes events to an Apache Iceberg table.
 // Use NewIcebergSinkWithSchema() to provide any Arrow schema.
