@@ -80,6 +80,8 @@ func init() {
 	ingestCmd.Flags().IntVar(&ingestWorkers, "workers", 0, "Number of workers (0=auto)")
 	ingestCmd.Flags().IntVar(&ingestMaxErrors, "max-errors", 1000, "Max errors before abort (0=unlimited)")
 	ingestCmd.Flags().StringVar(&ingestSource, "source", "", "Source URI (file://, http://, https://)")
+	ingestCmd.Flags().StringVar(&ingestErrorPolicy, "error-policy", "skip", "Error policy: strict, skip, quarantine, recover")
+	ingestCmd.Flags().StringVar(&ingestQuarantine, "quarantine", "", "Quarantine file path (used with --error-policy quarantine)")
 
 	rootCmd.AddCommand(ingestCmd)
 }
