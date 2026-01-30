@@ -449,7 +449,7 @@ func TestEnterpriseOrchestratorCreation(t *testing.T) {
 	cfg := DefaultEnterpriseConfig()
 	cfg.CheckpointDir = t.TempDir()
 
-	eo := NewEnterpriseOrchestrator(cfg)
+	eo, _ := NewEnterpriseOrchestrator(cfg)
 	if eo == nil {
 		t.Fatal("NewEnterpriseOrchestrator returned nil")
 	}
@@ -459,7 +459,7 @@ func TestEnterpriseOrchestratorHealthy(t *testing.T) {
 	cfg := DefaultEnterpriseConfig()
 	cfg.CheckpointDir = t.TempDir()
 
-	eo := NewEnterpriseOrchestrator(cfg)
+	eo, _ := NewEnterpriseOrchestrator(cfg)
 	if !eo.IsHealthy() {
 		t.Error("new enterprise orchestrator should be healthy")
 	}
@@ -469,7 +469,7 @@ func TestEnterpriseOrchestratorCircuitBreakerState(t *testing.T) {
 	cfg := DefaultEnterpriseConfig()
 	cfg.CheckpointDir = t.TempDir()
 
-	eo := NewEnterpriseOrchestrator(cfg)
+	eo, _ := NewEnterpriseOrchestrator(cfg)
 	state := eo.CircuitBreakerState()
 	if state != resilience.CircuitClosed {
 		t.Errorf("circuit breaker state = %d, want CircuitClosed", state)
@@ -480,7 +480,7 @@ func TestEnterpriseOrchestratorTelemetryMetrics(t *testing.T) {
 	cfg := DefaultEnterpriseConfig()
 	cfg.CheckpointDir = t.TempDir()
 
-	eo := NewEnterpriseOrchestrator(cfg)
+	eo, _ := NewEnterpriseOrchestrator(cfg)
 	metrics := eo.TelemetryMetrics()
 	if metrics == nil {
 		t.Fatal("TelemetryMetrics returned nil")
@@ -493,7 +493,7 @@ func TestEnterpriseOrchestratorDLQStats(t *testing.T) {
 	cfg.DLQDir = filepath.Join(t.TempDir(), "dlq")
 	os.MkdirAll(cfg.DLQDir, 0755)
 
-	eo := NewEnterpriseOrchestrator(cfg)
+	eo, _ := NewEnterpriseOrchestrator(cfg)
 	stats := eo.DLQStats()
 	if stats.RecordCount != 0 {
 		t.Errorf("initial DLQ RecordCount = %d, want 0", stats.RecordCount)
@@ -504,7 +504,7 @@ func TestEnterpriseOrchestratorStatus(t *testing.T) {
 	cfg := DefaultEnterpriseConfig()
 	cfg.CheckpointDir = t.TempDir()
 
-	eo := NewEnterpriseOrchestrator(cfg)
+	eo, _ := NewEnterpriseOrchestrator(cfg)
 	status := eo.Status()
 	if !status.Healthy {
 		t.Error("status.Healthy should be true")
