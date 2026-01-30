@@ -12,6 +12,7 @@ import (
 	_ "github.com/marcboeker/go-duckdb"
 
 	"github.com/logflow/logflow/pkg/core"
+	"github.com/logflow/logflow/pkg/pipeline"
 )
 
 // Config holds process mining configuration.
