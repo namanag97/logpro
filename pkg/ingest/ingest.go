@@ -50,6 +50,11 @@ type Options struct {
 	DuckDBThreads   int
 	BufferSize      int
 	ChunkSize       int64
+
+	// ErrorPolicy controls how errors are handled: strict, skip, quarantine, recover
+	ErrorPolicy    ingerrors.Policy
+	// QuarantinePath is the output file for quarantined rows (used when ErrorPolicy=quarantine)
+	QuarantinePath string
 }
 
 // DefaultOptions returns sensible defaults.
