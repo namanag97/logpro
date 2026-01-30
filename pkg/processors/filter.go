@@ -8,12 +8,9 @@ import (
 	"sync"
 
 	"github.com/logflow/logflow/pkg/pipeline"
-	"github.com/logflow/logflow/pkg/registry"
 )
 
 func init() {
-	registry.RegisterProcessor("filter", FilterProcessorFactory)
-
 	// Register built-in filter operators.
 	registerBuiltinFilterOps()
 }
