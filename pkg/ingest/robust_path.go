@@ -556,28 +556,49 @@ func (r *RobustPath) isNullValue(value []byte) bool {
 	return false
 }
 
-// parseTimestamp attempts to parse a timestamp string.
-func (r *RobustPath) parseTimestamp(s string) time.Time {
-layouts := []string{
-time.RFC3339,
-time.RFC3339Nano,
-"2006-01-02T15:04:05",
-"2006-01-02 15:04:05",
-"2006-01-02T15:04:05.000",
-"2006-01-02 15:04:05.000",
-"2006-01-02",
-"01/02/2006",
-"02-01-2006",
-"01/02/2006 15:04:05",
-"02-01-2006 15:04:05",
+// timestampLayouts is the shared set of timestamp layouts used by both
+// detection and parsing. Defined once to avoid repeated allocation.
+var timestampLayouts = []string{
+	time.RFC3339,
+	time.RFC3339Nano,
+	"2006-01-02T15:04:05",
+	"2006-01-02 15:04:05",
+	"2006-01-02T15:04:05.000",
+	"2006-01-02 15:04:05.000",
+	"2006-01-02",
+	"01/02/2006",
+	"02-01-2006",
+	"01/02/2006 15:04:05",
+	"02-01-2006 15:04:05",
 }
 
-for _, layout := range layouts {
-if t, err := time.Parse(layout, s); err == nil {
-return t
+// parseTimestamp attempts to parse a timestamp string (fallback, tries all formats).
+func (r *RobustPath) parseTimestamp(s string) time.Time {
+	for _, layout := range timestampLayouts {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t
+		}
+	}
+	return time.Time{}
 }
-}
-return time.Time{}
+
+// parseTimestampCached tries the cached format index first, falling back to
+// a full scan. Returns the parsed time and the index of the successful format.
+// hint == -1 means no cached format yet.
+func (r *RobustPath) parseTimestampCached(s string, hint int) (time.Time, int) {
+	// Try the cached format first
+	if hint >= 0 && hint < len(timestampLayouts) {
+		if t, err := time.Parse(timestampLayouts[hint], s); err == nil {
+			return t, hint
+		}
+	}
+	// Fall back to full scan
+	for i, layout := range timestampLayouts {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t, i
+		}
+	}
+	return time.Time{}, -1
 }
 
 // flushBatch writes accumulated data to Parquet.
