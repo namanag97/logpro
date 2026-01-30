@@ -77,23 +77,26 @@ func (p *XLSXParser) Parse(ctx context.Context, r io.Reader, out chan<- *model.E
 		colIdx[col] = i
 	}
 
-	// Find required columns
-	caseIDIdx, ok := p.findColumnIndex(colIdx, p.cfg.CaseIDColumn, "case_id", "case:concept:name", "Case ID", "CaseID")
-	if !ok {
-		return fmt.Errorf("case ID column not found (tried: %s)", p.cfg.CaseIDColumn)
+	// Find PM columns (all optional — when unset, everything goes to Attributes)
+	caseIDIdx := -1
+	activityIdx := -1
+	timestampIdx := -1
+	resourceIdx := -1
+
+	if col := p.cfg.Column("case_id"); col != "" {
+		caseIDIdx, _ = p.findColumnIndex(colIdx, col, "case_id", "case:concept:name", "Case ID", "CaseID")
+	}
+	if col := p.cfg.Column("activity"); col != "" {
+		activityIdx, _ = p.findColumnIndex(colIdx, col, "activity", "concept:name", "Activity", "event")
+	}
+	if col := p.cfg.Column("timestamp"); col != "" {
+		timestampIdx, _ = p.findColumnIndex(colIdx, col, "timestamp", "time:timestamp", "Timestamp", "time")
+	}
+	if col := p.cfg.Column("resource"); col != "" {
+		resourceIdx, _ = p.findColumnIndex(colIdx, col, "resource", "org:resource", "Resource")
 	}
 
-	activityIdx, ok := p.findColumnIndex(colIdx, p.cfg.ActivityColumn, "activity", "concept:name", "Activity", "event")
-	if !ok {
-		return fmt.Errorf("activity column not found (tried: %s)", p.cfg.ActivityColumn)
-	}
-
-	timestampIdx, ok := p.findColumnIndex(colIdx, p.cfg.TimestampColumn, "timestamp", "time:timestamp", "Timestamp", "time")
-	if !ok {
-		return fmt.Errorf("timestamp column not found (tried: %s)", p.cfg.TimestampColumn)
-	}
-
-	resourceIdx, _ := p.findColumnIndex(colIdx, p.cfg.ResourceColumn, "resource", "org:resource", "Resource")
+	pmMode := caseIDIdx >= 0 && activityIdx >= 0 && timestampIdx >= 0
 
 	// Process data rows
 	rowNum := 1
@@ -110,40 +113,46 @@ func (p *XLSXParser) Parse(ctx context.Context, r io.Reader, out chan<- *model.E
 			continue // Skip malformed rows
 		}
 
-		// Skip empty rows
 		if len(cols) == 0 {
 			continue
 		}
 
 		event := p.eventPool.Get()
 
-		// Extract case ID
-		if caseIDIdx < len(cols) {
-			event.CaseID = []byte(cols[caseIDIdx])
-		}
-
-		// Extract activity
-		if activityIdx < len(cols) {
-			event.Activity = []byte(cols[activityIdx])
-		}
-
-		// Extract timestamp
-		if timestampIdx < len(cols) {
-			ts, err := p.parseTimestamp(cols[timestampIdx])
-			if err == nil {
-				event.Timestamp = ts
+		if pmMode {
+			if caseIDIdx < len(cols) {
+				event.CaseID = []byte(cols[caseIDIdx])
 			}
-		}
+			if activityIdx < len(cols) {
+				event.Activity = []byte(cols[activityIdx])
+			}
+			if timestampIdx < len(cols) {
+				ts, tsErr := p.parseTimestamp(cols[timestampIdx])
+				if tsErr == nil {
+					event.Timestamp = ts
+				}
+			}
+			if resourceIdx >= 0 && resourceIdx < len(cols) {
+				event.Resource = []byte(cols[resourceIdx])
+			}
 
-		// Extract resource (optional)
-		if resourceIdx >= 0 && resourceIdx < len(cols) {
-			event.Resource = []byte(cols[resourceIdx])
-		}
-
-		// Skip events with missing required fields
-		if len(event.CaseID) == 0 || len(event.Activity) == 0 {
-			p.eventPool.Put(event)
-			continue
+			// Skip events with missing required PM fields
+			if len(event.CaseID) == 0 || len(event.Activity) == 0 {
+				p.eventPool.Put(event)
+				continue
+			}
+		} else {
+			// Generic mode: all columns to Attributes
+			for i, colName := range header {
+				if i < len(cols) && cols[i] != "" {
+					attr := model.Attribute{
+						Key:   []byte(colName),
+						Value: []byte(cols[i]),
+						Type:  model.AttrTypeString,
+					}
+					event.Attributes = append(event.Attributes, attr)
+				}
+			}
 		}
 
 		select {
