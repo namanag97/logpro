@@ -39,12 +39,22 @@ func (r *PipelineRunner) Configure(
 ) *PipelineRunner {
 	r.cfg.SourcePath = inputPath
 	r.cfg.SinkPath = outputPath
-	r.cfg.CaseIDColumn = caseIDCol
-	r.cfg.ActivityColumn = activityCol
-	r.cfg.TimestampColumn = timestampCol
-	r.cfg.ResourceColumn = resourceCol
 	r.cfg.Compression = compression
 	r.cfg.BatchSize = batchSize
+
+	// Populate ColumnMapping from PM columns (only when specified)
+	if caseIDCol != "" {
+		r.cfg.ColumnMapping["case_id"] = caseIDCol
+	}
+	if activityCol != "" {
+		r.cfg.ColumnMapping["activity"] = activityCol
+	}
+	if timestampCol != "" {
+		r.cfg.ColumnMapping["timestamp"] = timestampCol
+	}
+	if resourceCol != "" {
+		r.cfg.ColumnMapping["resource"] = resourceCol
+	}
 
 	return r
 }
