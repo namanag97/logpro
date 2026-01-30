@@ -490,8 +490,8 @@ func TestEnterpriseOrchestratorTelemetryMetrics(t *testing.T) {
 func TestEnterpriseOrchestratorDLQStats(t *testing.T) {
 	cfg := DefaultEnterpriseConfig()
 	cfg.CheckpointDir = t.TempDir()
-	cfg.DLQDir = filepath.Join(t.TempDir(), "dlq")
-	os.MkdirAll(cfg.DLQDir, 0755)
+	cfg.DLQPath = filepath.Join(t.TempDir(), "dlq")
+	os.MkdirAll(cfg.DLQPath, 0755)
 
 	eo, _ := NewEnterpriseOrchestrator(cfg)
 	stats := eo.DLQStats()
