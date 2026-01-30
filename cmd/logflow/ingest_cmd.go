@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/logflow/logflow/pkg/ingest"
+	ingerrors "github.com/logflow/logflow/pkg/ingest/errors"
 )
 
 var (
