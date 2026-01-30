@@ -62,7 +62,7 @@ Examples:
   # Force robust mode for problematic files
   logflow ingest messy.csv --strategy robust`,
 
-	Args: cobra.ExactArgs(1),
+	Args: cobra.RangeArgs(0, 1),
 	RunE: runIngest,
 }
 
