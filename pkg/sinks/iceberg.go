@@ -326,7 +326,7 @@ func (s *IcebergSink) startNewFile() error {
 	}
 	s.currentFile = file
 
-	codec := mapCompressionCodec(s.cfg.Compression)
+	codec := writer.MapCompressionCodec(s.cfg.Compression)
 	writerProps := parquet.NewWriterProperties(
 		parquet.WithCompression(codec),
 		parquet.WithDictionaryDefault(true),
