@@ -25,6 +25,8 @@ import (
 )
 
 // IcebergSink writes events to an Apache Iceberg table.
+// It supports both fixed process-mining schemas and dynamic schemas passed via
+// SetSchema(). When no schema is set, it defaults to the legacy 4-column layout.
 type IcebergSink struct {
 	cfg       pipeline.Config
 	tableDir  string
@@ -36,14 +38,12 @@ type IcebergSink struct {
 	currentFile   *os.File
 	currentPath   string
 
-	// Builders
-	caseIDBuilder    *array.StringBuilder
-	activityBuilder  *array.StringBuilder
-	timestampBuilder *array.Int64Builder
-	resourceBuilder  *array.StringBuilder
+	// Dynamic builders (one per schema field)
+	builders []array.Builder
 
 	// Tracking
 	rowCount      int
+	totalRows     int64 // actual total rows written across all files
 	batchCount    int
 	dataFiles     []DataFile
 	snapshotID    int64
