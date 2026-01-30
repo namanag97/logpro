@@ -3,6 +3,7 @@ package hooks
 
 import (
 	"context"
+	"sort"
 	"sync"
 
 	"github.com/apache/arrow/go/v14/arrow"
@@ -10,21 +11,7 @@ import (
 	"github.com/logflow/logflow/pkg/ingest/core"
 )
 
-// Manager manages pipeline hooks.
-type Manager struct {
-	mu sync.RWMutex
-
-	preDecode  []PreDecodeHook
-	postBatch  []PostBatchHook
-	preWrite   []PreWriteHook
-	onProgress []ProgressHook
-	onError    []ErrorHook
-}
-
-// NewManager creates a hook manager.
-func NewManager() *Manager {
-	return &Manager{}
-}
+// --- Hook types ---
 
 // PreDecodeHook is called before decoding starts.
 type PreDecodeHook func(ctx context.Context, source core.Source) (core.Source, error)
@@ -40,6 +27,46 @@ type ProgressHook func(progress Progress)
 
 // ErrorHook is called when errors occur.
 type ErrorHook func(err error, context ErrorContext)
+
+// --- Priority entry types ---
+
+// preDecodeEntry wraps a PreDecodeHook with priority and an optional condition.
+type preDecodeEntry struct {
+	Priority  int
+	Condition func(context.Context) bool
+	Hook      PreDecodeHook
+}
+
+// postBatchEntry wraps a PostBatchHook with priority and an optional condition.
+type postBatchEntry struct {
+	Priority  int
+	Condition func(context.Context) bool
+	Hook      PostBatchHook
+}
+
+// preWriteEntry wraps a PreWriteHook with priority and an optional condition.
+type preWriteEntry struct {
+	Priority  int
+	Condition func(context.Context) bool
+	Hook      PreWriteHook
+}
+
+// progressEntry wraps a ProgressHook with priority.
+type progressEntry struct {
+	Priority int
+	Hook     ProgressHook
+}
+
+// errorEntry wraps an ErrorHook with priority.
+type errorEntry struct {
+	Priority int
+	Hook     ErrorHook
+}
+
+// defaultPriority is used when hooks are registered through the simple Register* methods.
+const defaultPriority = 100
+
+// --- Data types ---
 
 // Progress contains progress information.
 type Progress struct {
@@ -61,50 +88,153 @@ type ErrorContext struct {
 	Phase     string // "decode", "transform", "write"
 }
 
-// RegisterPreDecode adds a pre-decode hook.
+// --- Manager ---
+
+// Manager manages pipeline hooks.
+type Manager struct {
+	mu sync.RWMutex
+
+	preDecode  []preDecodeEntry
+	postBatch  []postBatchEntry
+	preWrite   []preWriteEntry
+	onProgress []progressEntry
+	onError    []errorEntry
+}
+
+// NewManager creates a hook manager.
+func NewManager() *Manager {
+	return &Manager{}
+}
+
+// --- Registration: simple (default priority, no condition) ---
+
+// RegisterPreDecode adds a pre-decode hook with default priority and no condition.
 func (m *Manager) RegisterPreDecode(hook PreDecodeHook) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.preDecode = append(m.preDecode, hook)
+	m.preDecode = append(m.preDecode, preDecodeEntry{
+		Priority: defaultPriority,
+		Hook:     hook,
+	})
 }
 
-// RegisterPostBatch adds a post-batch hook.
+// RegisterPostBatch adds a post-batch hook with default priority and no condition.
 func (m *Manager) RegisterPostBatch(hook PostBatchHook) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.postBatch = append(m.postBatch, hook)
+	m.postBatch = append(m.postBatch, postBatchEntry{
+		Priority: defaultPriority,
+		Hook:     hook,
+	})
 }
 
-// RegisterPreWrite adds a pre-write hook.
+// RegisterPreWrite adds a pre-write hook with default priority and no condition.
 func (m *Manager) RegisterPreWrite(hook PreWriteHook) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.preWrite = append(m.preWrite, hook)
+	m.preWrite = append(m.preWrite, preWriteEntry{
+		Priority: defaultPriority,
+		Hook:     hook,
+	})
 }
 
-// RegisterProgress adds a progress hook.
+// RegisterProgress adds a progress hook with default priority.
 func (m *Manager) RegisterProgress(hook ProgressHook) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.onProgress = append(m.onProgress, hook)
+	m.onProgress = append(m.onProgress, progressEntry{
+		Priority: defaultPriority,
+		Hook:     hook,
+	})
 }
 
-// RegisterError adds an error hook.
+// RegisterError adds an error hook with default priority.
 func (m *Manager) RegisterError(hook ErrorHook) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.onError = append(m.onError, hook)
+	m.onError = append(m.onError, errorEntry{
+		Priority: defaultPriority,
+		Hook:     hook,
+	})
 }
 
-// RunPreDecode runs all pre-decode hooks.
+// --- Registration: with priority and optional condition ---
+
+// RegisterPreDecodeWithPriority adds a pre-decode hook with explicit priority and condition.
+// Lower priority values execute first. If condition is non-nil and returns false for the
+// given context, the hook is skipped.
+func (m *Manager) RegisterPreDecodeWithPriority(hook PreDecodeHook, priority int, condition func(context.Context) bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.preDecode = append(m.preDecode, preDecodeEntry{
+		Priority:  priority,
+		Condition: condition,
+		Hook:      hook,
+	})
+}
+
+// RegisterPostBatchWithPriority adds a post-batch hook with explicit priority and condition.
+func (m *Manager) RegisterPostBatchWithPriority(hook PostBatchHook, priority int, condition func(context.Context) bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.postBatch = append(m.postBatch, postBatchEntry{
+		Priority:  priority,
+		Condition: condition,
+		Hook:      hook,
+	})
+}
+
+// RegisterPreWriteWithPriority adds a pre-write hook with explicit priority and condition.
+func (m *Manager) RegisterPreWriteWithPriority(hook PreWriteHook, priority int, condition func(context.Context) bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.preWrite = append(m.preWrite, preWriteEntry{
+		Priority:  priority,
+		Condition: condition,
+		Hook:      hook,
+	})
+}
+
+// RegisterProgressWithPriority adds a progress hook with explicit priority.
+func (m *Manager) RegisterProgressWithPriority(hook ProgressHook, priority int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onProgress = append(m.onProgress, progressEntry{
+		Priority: priority,
+		Hook:     hook,
+	})
+}
+
+// RegisterErrorWithPriority adds an error hook with explicit priority.
+func (m *Manager) RegisterErrorWithPriority(hook ErrorHook, priority int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onError = append(m.onError, errorEntry{
+		Priority: priority,
+		Hook:     hook,
+	})
+}
+
+// --- Execution ---
+
+// RunPreDecode runs all pre-decode hooks sorted by priority (ascending).
+// Hooks whose condition returns false are skipped.
 func (m *Manager) RunPreDecode(ctx context.Context, source core.Source) (core.Source, error) {
 	m.mu.RLock()
-	hooks := m.preDecode
+	entries := make([]preDecodeEntry, len(m.preDecode))
+	copy(entries, m.preDecode)
 	m.mu.RUnlock()
 
+	sort.SliceStable(entries, func(i, j int) bool {
+		return entries[i].Priority < entries[j].Priority
+	})
+
 	var err error
-	for _, hook := range hooks {
-		source, err = hook(ctx, source)
+	for _, entry := range entries {
+		if entry.Condition != nil && !entry.Condition(ctx) {
+			continue
+		}
+		source, err = entry.Hook(ctx, source)
 		if err != nil {
 			return nil, err
 		}
@@ -112,15 +242,24 @@ func (m *Manager) RunPreDecode(ctx context.Context, source core.Source) (core.So
 	return source, nil
 }
 
-// RunPostBatch runs all post-batch hooks.
+// RunPostBatch runs all post-batch hooks sorted by priority (ascending).
+// Hooks whose condition returns false are skipped.
 func (m *Manager) RunPostBatch(ctx context.Context, batch arrow.Record) (arrow.Record, error) {
 	m.mu.RLock()
-	hooks := m.postBatch
+	entries := make([]postBatchEntry, len(m.postBatch))
+	copy(entries, m.postBatch)
 	m.mu.RUnlock()
 
+	sort.SliceStable(entries, func(i, j int) bool {
+		return entries[i].Priority < entries[j].Priority
+	})
+
 	var err error
-	for _, hook := range hooks {
-		batch, err = hook(ctx, batch)
+	for _, entry := range entries {
+		if entry.Condition != nil && !entry.Condition(ctx) {
+			continue
+		}
+		batch, err = entry.Hook(ctx, batch)
 		if err != nil {
 			return nil, err
 		}
@@ -128,39 +267,58 @@ func (m *Manager) RunPostBatch(ctx context.Context, batch arrow.Record) (arrow.R
 	return batch, nil
 }
 
-// RunPreWrite runs all pre-write hooks.
+// RunPreWrite runs all pre-write hooks sorted by priority (ascending).
+// Hooks whose condition returns false are skipped.
 func (m *Manager) RunPreWrite(ctx context.Context, batch arrow.Record, metadata map[string]string) error {
 	m.mu.RLock()
-	hooks := m.preWrite
+	entries := make([]preWriteEntry, len(m.preWrite))
+	copy(entries, m.preWrite)
 	m.mu.RUnlock()
 
-	for _, hook := range hooks {
-		if err := hook(ctx, batch, metadata); err != nil {
+	sort.SliceStable(entries, func(i, j int) bool {
+		return entries[i].Priority < entries[j].Priority
+	})
+
+	for _, entry := range entries {
+		if entry.Condition != nil && !entry.Condition(ctx) {
+			continue
+		}
+		if err := entry.Hook(ctx, batch, metadata); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// ReportProgress reports progress to all hooks.
+// ReportProgress reports progress to all hooks sorted by priority (ascending).
 func (m *Manager) ReportProgress(progress Progress) {
 	m.mu.RLock()
-	hooks := m.onProgress
+	entries := make([]progressEntry, len(m.onProgress))
+	copy(entries, m.onProgress)
 	m.mu.RUnlock()
 
-	for _, hook := range hooks {
-		hook(progress)
+	sort.SliceStable(entries, func(i, j int) bool {
+		return entries[i].Priority < entries[j].Priority
+	})
+
+	for _, entry := range entries {
+		entry.Hook(progress)
 	}
 }
 
-// ReportError reports an error to all hooks.
+// ReportError reports an error to all hooks sorted by priority (ascending).
 func (m *Manager) ReportError(err error, ctx ErrorContext) {
 	m.mu.RLock()
-	hooks := m.onError
+	entries := make([]errorEntry, len(m.onError))
+	copy(entries, m.onError)
 	m.mu.RUnlock()
 
-	for _, hook := range hooks {
-		hook(err, ctx)
+	sort.SliceStable(entries, func(i, j int) bool {
+		return entries[i].Priority < entries[j].Priority
+	})
+
+	for _, entry := range entries {
+		entry.Hook(err, ctx)
 	}
 }
 
