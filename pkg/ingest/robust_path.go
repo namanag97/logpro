@@ -525,14 +525,26 @@ builder.(*array.StringBuilder).Append(s)
 }
 }
 
-// isNullValue checks if value represents null.
-func (r *RobustPath) isNullValue(value []byte) bool {
-s := string(bytes.TrimSpace(value))
-switch s {
-case "", "NULL", "null", "NA", "N/A", "n/a", "None", "none", "nil", "-", "\\N":
-return true
+// nullValues holds the canonical null representations as byte slices to avoid
+// allocating strings on every call to isNullValue.
+var nullValues = [][]byte{
+	[]byte("NULL"), []byte("null"), []byte("NA"), []byte("N/A"),
+	[]byte("n/a"), []byte("None"), []byte("none"), []byte("nil"),
+	[]byte("-"), []byte("\\N"),
 }
-return false
+
+// isNullValue checks if value represents null without allocating a string.
+func (r *RobustPath) isNullValue(value []byte) bool {
+	v := bytes.TrimSpace(value)
+	if len(v) == 0 {
+		return true
+	}
+	for _, nv := range nullValues {
+		if bytes.Equal(v, nv) {
+			return true
+		}
+	}
+	return false
 }
 
 // parseTimestamp attempts to parse a timestamp string.
