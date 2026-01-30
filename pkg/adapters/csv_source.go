@@ -58,6 +58,7 @@ func NewCSVSource(cfg pipeline.Config) (*CSVSource, error) {
 		bufferPool:   pool.NewBufferPool(cfg.BufferSize),
 		eventPool:    pool.NewEventPool(),
 		delimiter:    delimiter,
+		scanner:      parser.NewCSVScanner(delimiter),
 		errorHandler: errorHandler,
 		caseIdx:      -1,
 		activityIdx:  -1,
