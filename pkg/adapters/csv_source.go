@@ -184,7 +184,7 @@ func (s *CSVSource) Read(ctx context.Context, r io.Reader, out chan<- *pipeline.
 				RawData:    append([]byte{}, line...),
 				ErrorType:  pipeline.ErrorTypeInvalidTimestamp,
 				Message:    "failed to parse timestamp: " + parseErr.Error(),
-				Column:     s.cfg.TimestampColumn,
+				Column:     s.cfg.Column("timestamp"),
 				SourceFile: s.sourceFile,
 				Timestamp:  time.Now(),
 			}
