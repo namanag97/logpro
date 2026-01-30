@@ -112,8 +112,8 @@ func TestSpanStatus(t *testing.T) {
 	if span.Status != SpanStatusError {
 		t.Errorf("span status = %d, want %d", span.Status, SpanStatusError)
 	}
-	if span.StatusMessage != "something failed" {
-		t.Errorf("span status message = %q, want %q", span.StatusMessage, "something failed")
+	if span.StatusMsg != "something failed" {
+		t.Errorf("span status message = %q, want %q", span.StatusMsg, "something failed")
 	}
 	tr.EndSpan(span)
 }
