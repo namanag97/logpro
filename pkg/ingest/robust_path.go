@@ -144,58 +144,64 @@ return nil, fmt.Errorf("failed to create writer: %w", err)
 }
 defer writer.Close()
 
-// Process records in batches
-batchSize := 8192
-builders := r.createBuilders(schema, memory.DefaultAllocator)
+	// Process records in batches
+	batchSize := 8192
+	builders := r.createBuilders(schema, memory.DefaultAllocator)
 
-var rowCount int64
-var errorCount int64
-var recoveredCount int64
-lineNum := int64(1)
+	// Per-column timestamp format cache: -1 means "not yet locked"
+	tsFormatIdx := make([]int, len(types))
+	for i := range tsFormatIdx {
+		tsFormatIdx[i] = -1
+	}
 
-for {
-select {
-case <-ctx.Done():
-return nil, ctx.Err()
-default:
-}
+	var rowCount int64
+	var errorCount int64
+	var recoveredCount int64
+	lineNum := int64(1)
 
-line, err := r.readLine(reader)
-if err == io.EOF {
-break
-}
-if err != nil {
-return nil, fmt.Errorf("read error at line %d: %w", lineNum, err)
-}
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
 
-lineNum++
+		line, err := r.readLine(reader)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read error at line %d: %w", lineNum, err)
+		}
 
-// Parse with error recovery
-fields, parseErr, recovered := r.parseCSVLineRobust(line, analysis.Delimiter, analysis.QuoteChar, len(headers))
+		lineNum++
 
-if parseErr != nil && !recovered {
-errorCount++
-if opts.MaxErrors > 0 && errorCount >= int64(opts.MaxErrors) {
-return nil, fmt.Errorf("too many errors (%d), aborting", errorCount)
-}
-continue
-}
+		// Parse with error recovery
+		fields, parseErr, recovered := r.parseCSVLineRobust(line, analysis.Delimiter, analysis.QuoteChar, len(headers))
 
-if recovered {
-recoveredCount++
-}
+		if parseErr != nil && !recovered {
+			errorCount++
+			if opts.MaxErrors > 0 && errorCount >= int64(opts.MaxErrors) {
+				return nil, fmt.Errorf("too many errors (%d), aborting", errorCount)
+			}
+			continue
+		}
 
-// Add to builders
-r.appendRecord(builders, types, fields, headers)
-rowCount++
+		if recovered {
+			recoveredCount++
+		}
 
-// Flush batch if needed
-if rowCount > 0 && rowCount%int64(batchSize) == 0 {
-if err := r.flushBatch(writer, schema, builders); err != nil {
-return nil, fmt.Errorf("failed to write batch: %w", err)
-}
-}
-}
+		// Add to builders
+		r.appendRecord(builders, types, fields, headers, tsFormatIdx)
+		rowCount++
+
+		// Flush batch if needed
+		if rowCount > 0 && rowCount%int64(batchSize) == 0 {
+			if err := r.flushBatch(writer, schema, builders); err != nil {
+				return nil, fmt.Errorf("failed to write batch: %w", err)
+			}
+		}
+	}
 
 // Flush remaining
 if rowCount%int64(batchSize) != 0 {
