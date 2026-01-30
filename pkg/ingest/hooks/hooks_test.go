@@ -2,11 +2,27 @@ package hooks
 
 import (
 	"context"
+	"io"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/logflow/logflow/pkg/ingest/core"
 )
+
+// mockSource implements core.Source for testing.
+type mockSource struct {
+	id     string
+	format core.Format
+}
+
+func (m *mockSource) ID() string                  { return m.id }
+func (m *mockSource) Location() string            { return "/tmp/" + m.id }
+func (m *mockSource) Format() core.Format         { return m.format }
+func (m *mockSource) Size() int64                 { return 0 }
+func (m *mockSource) ModTime() time.Time          { return time.Time{} }
+func (m *mockSource) Open(ctx context.Context) (io.ReadCloser, error) { return nil, nil }
+func (m *mockSource) Metadata() map[string]string { return nil }
 
 // --- Manager basic tests ---
 
@@ -28,7 +44,7 @@ func TestPreDecodeHook(t *testing.T) {
 		return source, nil
 	})
 
-	src := &core.SourceInfo{ID_: "test", Format_: core.FormatCSV}
+	src := &mockSource{id: "test", format: core.FormatCSV}
 	result, err := m.RunPreDecode(context.Background(), src)
 	if err != nil {
 		t.Fatalf("RunPreDecode error: %v", err)
@@ -46,13 +62,13 @@ func TestPreDecodeHookChaining(t *testing.T) {
 
 	// First hook modifies the source
 	m.RegisterPreDecode(func(ctx context.Context, source core.Source) (core.Source, error) {
-		return &core.SourceInfo{
-			ID_:     source.ID() + "-modified",
-			Format_: source.Format(),
+		return &mockSource{
+			id:     source.ID() + "-modified",
+			format: source.Format(),
 		}, nil
 	})
 
-	src := &core.SourceInfo{ID_: "original", Format_: core.FormatCSV}
+	src := &mockSource{id: "original", format: core.FormatCSV}
 	result, err := m.RunPreDecode(context.Background(), src)
 	if err != nil {
 		t.Fatalf("RunPreDecode error: %v", err)
@@ -160,7 +176,7 @@ func TestConditionalPreDecodeHook(t *testing.T) {
 		},
 	)
 
-	src := &core.SourceInfo{ID_: "test", Format_: core.FormatCSV}
+	src := &mockSource{id: "test", format: core.FormatCSV}
 	_, _ = m.RunPreDecode(context.Background(), src)
 
 	if atomic.LoadInt32(&callCount) != 0 {
@@ -183,7 +199,7 @@ func TestConditionalHookTrue(t *testing.T) {
 		},
 	)
 
-	src := &core.SourceInfo{ID_: "test", Format_: core.FormatCSV}
+	src := &mockSource{id: "test", format: core.FormatCSV}
 	_, _ = m.RunPreDecode(context.Background(), src)
 
 	if !called {
