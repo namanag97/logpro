@@ -87,8 +87,9 @@ func TestQuarantinePolicyHandler(t *testing.T) {
 		Error:     errors.New("bad data"),
 	}, q)
 
-	if action != ActionSkip {
-		t.Errorf("QuarantinePolicy action = %d, want ActionSkip(%d)", action, ActionSkip)
+	// QuarantinePolicyHandler returns ActionContinue (adds to quarantine and continues)
+	if action != ActionContinue {
+		t.Errorf("QuarantinePolicy action = %d, want ActionContinue(%d)", action, ActionContinue)
 	}
 	if err != nil {
 		t.Errorf("QuarantinePolicy error = %v, want nil", err)
