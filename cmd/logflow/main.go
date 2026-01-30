@@ -296,12 +296,9 @@ func runConvert(cmd *cobra.Command, args []string) error {
 
 func runDuckDBConvert(ctx context.Context, format parser.Format, metadata map[string]string) (*pipe.IngestResult, error) {
 	parserCfg := parser.Config{
-		BatchSize:       batchSize,
-		BufferSize:      bufferSize,
-		CaseIDColumn:    csvCaseIDColumn,
-		ActivityColumn:  csvActivityColumn,
-		TimestampColumn: csvTimestampColumn,
-		ResourceColumn:  csvResourceColumn,
+		BatchSize:      batchSize,
+		BufferSize:     bufferSize,
+		ColumnMapping:  buildColumnMapping(),
 		TimestampFormat: csvTimestampFormat,
 		Delimiter:       csvDelimiter[0],
 	}
