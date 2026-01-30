@@ -453,23 +453,40 @@ func (s *IcebergSink) writeMetadata() error {
 		totalRows += df.RecordCount
 	}
 
+	// Build schema fields dynamically from the Arrow schema
+	schemaFields := make([]Field, s.schema.NumFields())
+	for i, field := range s.schema.Fields() {
+		iceType := "string"
+		switch field.Type.ID() {
+		case arrow.INT64:
+			iceType = "long"
+		case arrow.FLOAT64:
+			iceType = "double"
+		case arrow.BOOL:
+			iceType = "boolean"
+		case arrow.TIMESTAMP:
+			iceType = "timestamptz"
+		}
+		schemaFields[i] = Field{
+			ID:       i + 1,
+			Name:     field.Name,
+			Required: !field.Nullable,
+			Type:     iceType,
+		}
+	}
+
 	metadata := IcebergMetadata{
 		FormatVersion:   2,
 		TableUUID:       tableUUID,
 		Location:        s.tableDir,
 		LastUpdatedMs:   time.Now().UnixMilli(),
-		LastColumnID:    4,
+		LastColumnID:    s.schema.NumFields(),
 		CurrentSchemaID: 0,
 		Schemas: []SchemaSpec{
 			{
 				SchemaID: 0,
 				Type:     "struct",
-				Fields: []Field{
-					{ID: 1, Name: "case_id", Required: true, Type: "string"},
-					{ID: 2, Name: "activity", Required: true, Type: "string"},
-					{ID: 3, Name: "timestamp", Required: true, Type: "long"},
-					{ID: 4, Name: "resource", Required: false, Type: "string"},
-				},
+				Fields:   schemaFields,
 			},
 		},
 		PartitionSpecs: []PartitionSpec{
