@@ -1,0 +1,605 @@
+package pipeline
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/logflow/logflow/pkg/checkpoint"
+	"github.com/logflow/logflow/pkg/resilience"
+	"github.com/logflow/logflow/pkg/telemetry"
+)
+
+// --- Mock Source/Sink/Processor for testing ---
+
+type mockSource struct {
+	events []*Event
+}
+
+func (m *mockSource) Name() string { return "mock-source" }
+func (m *mockSource) SupportsFormat(format string) bool { return true }
+func (m *mockSource) Read(ctx context.Context, r interface{}, out chan<- *Event) error {
+	defer close(out)
+	for _, e := range m.events {
+		select {
+		case out <- e:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return nil
+}
+
+type mockSink struct {
+	received []*Event
+}
+
+func (m *mockSink) Name() string { return "mock-sink" }
+func (m *mockSink) Write(ctx context.Context, in <-chan *Event) error {
+	for e := range in {
+		m.received = append(m.received, e)
+	}
+	return nil
+}
+func (m *mockSink) Close() error { return nil }
+
+type mockProcessor struct {
+	name      string
+	processed int
+}
+
+func (m *mockProcessor) Name() string { return m.name }
+func (m *mockProcessor) Process(ctx context.Context, in <-chan *Event, out chan<- *Event) error {
+	defer close(out)
+	for e := range in {
+		m.processed++
+		select {
+		case out <- e:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return nil
+}
+
+func makeTestEvents(n int) []*Event {
+	events := make([]*Event, n)
+	for i := range events {
+		events[i] = &Event{
+			CaseID:    []byte("case1"),
+			Activity:  []byte("A"),
+			Timestamp: time.Now().UnixNano(),
+		}
+	}
+	return events
+}
+
+// --- DefaultEnterpriseConfig tests ---
+
+func TestDefaultEnterpriseConfig(t *testing.T) {
+	cfg := DefaultEnterpriseConfig()
+
+	if cfg.Pipeline.BufferSize <= 0 {
+		t.Error("default buffer size should be > 0")
+	}
+}
+
+// --- TracedProcessor tests ---
+
+func TestTracedProcessorName(t *testing.T) {
+	inner := &mockProcessor{name: "inner"}
+	tracer := telemetry.NewTracer("test")
+	tp := NewTracedProcessor(inner, tracer)
+
+	if tp.Name() != "inner" {
+		t.Errorf("Name = %q, want %q", tp.Name(), "inner")
+	}
+}
+
+func TestTracedProcessorProcess(t *testing.T) {
+	inner := &mockProcessor{name: "inner"}
+	tracer := telemetry.NewTracer("test")
+	tp := NewTracedProcessor(inner, tracer)
+
+	in := make(chan *Event, 5)
+	out := make(chan *Event, 5)
+	events := makeTestEvents(3)
+	for _, e := range events {
+		in <- e
+	}
+	close(in)
+
+	err := tp.Process(context.Background(), in, out)
+	if err != nil {
+		t.Fatalf("Process error: %v", err)
+	}
+
+	count := 0
+	for range out {
+		count++
+	}
+	if count != 3 {
+		t.Errorf("output count = %d, want 3", count)
+	}
+	if inner.processed != 3 {
+		t.Errorf("inner processed = %d, want 3", inner.processed)
+	}
+}
+
+// --- ResilientProcessor tests ---
+
+func TestResilientProcessorName(t *testing.T) {
+	inner := &mockProcessor{name: "resilient-inner"}
+	cb := resilience.NewCircuitBreaker()
+	pp := resilience.NewPoisonPillHandler()
+	rp := NewResilientProcessor(inner, cb, pp)
+
+	if rp.Name() != "resilient-inner" {
+		t.Errorf("Name = %q, want %q", rp.Name(), "resilient-inner")
+	}
+}
+
+func TestResilientProcessorProcess(t *testing.T) {
+	inner := &mockProcessor{name: "inner"}
+	cb := resilience.NewCircuitBreaker().WithMaxConcurrent(1000)
+	pp := resilience.NewPoisonPillHandler()
+	rp := NewResilientProcessor(inner, cb, pp)
+
+	in := make(chan *Event, 5)
+	out := make(chan *Event, 5)
+	events := makeTestEvents(3)
+	for _, e := range events {
+		in <- e
+	}
+	close(in)
+
+	err := rp.Process(context.Background(), in, out)
+	if err != nil {
+		t.Fatalf("Process error: %v", err)
+	}
+
+	count := 0
+	for range out {
+		count++
+	}
+	if count != 3 {
+		t.Errorf("output count = %d, want 3", count)
+	}
+}
+
+func TestResilientProcessorCircuitBreakerState(t *testing.T) {
+	cb := resilience.NewCircuitBreaker()
+	state := cb.State()
+	if state != resilience.CircuitClosed {
+		t.Errorf("initial state = %d, want CircuitClosed", state)
+	}
+}
+
+// --- CheckpointedProcessor tests ---
+
+func TestCheckpointedProcessorName(t *testing.T) {
+	inner := &mockProcessor{name: "cp-inner"}
+	cp := resilience.NewCheckpoint("in.csv", "out.parquet", "hash")
+	cpp := NewCheckpointedProcessor(inner, cp, 2)
+
+	if cpp.Name() != "cp-inner" {
+		t.Errorf("Name = %q, want %q", cpp.Name(), "cp-inner")
+	}
+}
+
+func TestCheckpointedProcessorProcess(t *testing.T) {
+	inner := &mockProcessor{name: "inner"}
+	cp := resilience.NewCheckpoint("in.csv", "out.parquet", "hash")
+	cpp := NewCheckpointedProcessor(inner, cp, 2)
+
+	in := make(chan *Event, 10)
+	out := make(chan *Event, 10)
+	events := makeTestEvents(5)
+	for _, e := range events {
+		in <- e
+	}
+	close(in)
+
+	err := cpp.Process(context.Background(), in, out)
+	if err != nil {
+		t.Fatalf("Process error: %v", err)
+	}
+
+	count := 0
+	for range out {
+		count++
+	}
+	if count != 5 {
+		t.Errorf("output count = %d, want 5", count)
+	}
+}
+
+// --- DLQ tests ---
+
+func TestDLQWriterAndReader(t *testing.T) {
+	dir := t.TempDir()
+	cfg := DefaultDLQConfig(dir)
+	writer := NewDLQWriter(cfg)
+
+	record := DLQRecord{
+		RawData:      []byte("bad data"),
+		RowNumber:    42,
+		ErrorType:    "parse",
+		ErrorMessage: "invalid format",
+		SourceFile:   "test.csv",
+		JobID:        "job1",
+		Recoverable:  true,
+		Timestamp:    time.Now(),
+	}
+
+	writer.Write(record)
+	stats := writer.Stats()
+	if stats.TotalRecords != 1 {
+		t.Errorf("DLQ TotalRecords = %d, want 1", stats.TotalRecords)
+	}
+
+	writer.Flush()
+	writer.Close()
+}
+
+func TestDefaultDLQConfig(t *testing.T) {
+	dir := t.TempDir()
+	cfg := DefaultDLQConfig(dir)
+
+	if cfg.MaxRecordsPerFile <= 0 {
+		t.Error("MaxRecordsPerFile should be > 0")
+	}
+	if cfg.MaxBytesPerFile <= 0 {
+		t.Error("MaxBytesPerFile should be > 0")
+	}
+}
+
+func TestDLQProcessorName(t *testing.T) {
+	dir := t.TempDir()
+	inner := &mockProcessor{name: "dlq-inner"}
+	dlq := NewDLQWriter(DefaultDLQConfig(dir))
+	dp := NewDLQProcessor(inner, dlq, "job1", "test.csv")
+
+	if dp.Name() != "dlq-inner" {
+		t.Errorf("Name = %q, want %q", dp.Name(), "dlq-inner")
+	}
+	dlq.Close()
+}
+
+// --- Pipeline checkpoint manager tests ---
+
+func TestCheckpointManager(t *testing.T) {
+	dir := t.TempDir()
+	cm := NewCheckpointManager(dir)
+	if cm == nil {
+		t.Fatal("NewCheckpointManager returned nil")
+	}
+
+	cp := cm.Create("job1", "input.csv")
+	if cp == nil {
+		t.Fatal("Create returned nil")
+	}
+
+	got := cm.Get("job1")
+	if got == nil {
+		t.Fatal("Get returned nil")
+	}
+
+	cm.Update("job1", func(c *Checkpoint) {
+		c.BytesRead = 2048
+		c.RowsRead = 100
+	})
+
+	updated := cm.Get("job1")
+	if updated.BytesRead != 2048 {
+		t.Errorf("BytesRead = %d, want 2048", updated.BytesRead)
+	}
+}
+
+func TestCheckpointManagerComplete(t *testing.T) {
+	dir := t.TempDir()
+	cm := NewCheckpointManager(dir)
+	_ = cm.Create("job1", "input.csv")
+
+	cm.Complete("job1")
+
+	cp := cm.Get("job1")
+	if cp.Status != CheckpointCompleted {
+		t.Errorf("status = %d, want CheckpointCompleted(%d)", cp.Status, CheckpointCompleted)
+	}
+}
+
+func TestCheckpointManagerFail(t *testing.T) {
+	dir := t.TempDir()
+	cm := NewCheckpointManager(dir)
+	_ = cm.Create("job1", "input.csv")
+
+	cm.Fail("job1", nil)
+
+	cp := cm.Get("job1")
+	if cp.Status != CheckpointFailed {
+		t.Errorf("status = %d, want CheckpointFailed(%d)", cp.Status, CheckpointFailed)
+	}
+}
+
+func TestCheckpointManagerListIncomplete(t *testing.T) {
+	dir := t.TempDir()
+	cm := NewCheckpointManager(dir)
+	_ = cm.Create("job1", "a.csv")
+	_ = cm.Create("job2", "b.csv")
+	cm.Complete("job2")
+
+	incomplete := cm.ListIncomplete()
+	if len(incomplete) != 1 {
+		t.Errorf("incomplete count = %d, want 1", len(incomplete))
+	}
+}
+
+func TestCheckpointManagerDelete(t *testing.T) {
+	dir := t.TempDir()
+	cm := NewCheckpointManager(dir)
+	_ = cm.Create("job1", "input.csv")
+	cm.Delete("job1")
+
+	if cm.Get("job1") != nil {
+		t.Error("Get after Delete should return nil")
+	}
+}
+
+func TestCheckpointManagerCanResume(t *testing.T) {
+	dir := t.TempDir()
+	cm := NewCheckpointManager(dir)
+	cp := cm.Create("job1", "input.csv")
+	cm.Update("job1", func(c *Checkpoint) {
+		c.BytesRead = 1000
+	})
+
+	_ = cp
+	canResume := cm.CanResume("input.csv")
+	if !canResume {
+		t.Error("CanResume should return true for incomplete checkpoint")
+	}
+}
+
+// --- ErrorHandler tests ---
+
+func TestErrorHandlerStrict(t *testing.T) {
+	h := NewErrorHandler(ErrorPolicyStrict)
+	err := h.HandleError(ErrorRecord{
+		Type:    ErrorTypeMalformedRow,
+		Message: "bad row",
+	})
+	if err == nil {
+		t.Error("strict policy should return error")
+	}
+}
+
+func TestErrorHandlerSkip(t *testing.T) {
+	h := NewErrorHandler(ErrorPolicySkip)
+	err := h.HandleError(ErrorRecord{
+		Type:    ErrorTypeMalformedRow,
+		Message: "bad row",
+	})
+	if err != nil {
+		t.Errorf("skip policy error = %v, want nil", err)
+	}
+
+	stats := h.Stats()
+	if stats.Skipped != 1 {
+		t.Errorf("skipped = %d, want 1", stats.Skipped)
+	}
+}
+
+func TestErrorHandlerMaxErrors(t *testing.T) {
+	h := NewErrorHandler(ErrorPolicySkip).WithMaxErrors(2)
+
+	_ = h.HandleError(ErrorRecord{Type: ErrorTypeMalformedRow})
+	_ = h.HandleError(ErrorRecord{Type: ErrorTypeMalformedRow})
+	err := h.HandleError(ErrorRecord{Type: ErrorTypeMalformedRow})
+
+	if err == nil {
+		t.Error("should return error after exceeding max errors")
+	}
+}
+
+func TestErrorHandlerReset(t *testing.T) {
+	h := NewErrorHandler(ErrorPolicySkip)
+	_ = h.HandleError(ErrorRecord{Type: ErrorTypeMalformedRow})
+	h.Reset()
+
+	stats := h.Stats()
+	if stats.Total != 0 {
+		t.Errorf("total after reset = %d, want 0", stats.Total)
+	}
+}
+
+func TestErrorHandlerCallbacks(t *testing.T) {
+	onErrorCalled := false
+	onSkipCalled := false
+
+	h := NewErrorHandler(ErrorPolicySkip).
+		WithOnError(func(er ErrorRecord) { onErrorCalled = true }).
+		WithOnSkip(func(rowNum int64, reason string) { onSkipCalled = true })
+
+	_ = h.HandleError(ErrorRecord{Type: ErrorTypeMalformedRow, RowNumber: 1})
+
+	if !onErrorCalled {
+		t.Error("OnError callback was not called")
+	}
+	if !onSkipCalled {
+		t.Error("OnSkip callback was not called")
+	}
+}
+
+// --- EnterpriseOrchestrator status ---
+
+func TestEnterpriseOrchestratorCreation(t *testing.T) {
+	cfg := DefaultEnterpriseConfig()
+	cfg.CheckpointDir = t.TempDir()
+
+	eo := NewEnterpriseOrchestrator(cfg)
+	if eo == nil {
+		t.Fatal("NewEnterpriseOrchestrator returned nil")
+	}
+}
+
+func TestEnterpriseOrchestratorHealthy(t *testing.T) {
+	cfg := DefaultEnterpriseConfig()
+	cfg.CheckpointDir = t.TempDir()
+
+	eo := NewEnterpriseOrchestrator(cfg)
+	if !eo.IsHealthy() {
+		t.Error("new enterprise orchestrator should be healthy")
+	}
+}
+
+func TestEnterpriseOrchestratorCircuitBreakerState(t *testing.T) {
+	cfg := DefaultEnterpriseConfig()
+	cfg.CheckpointDir = t.TempDir()
+
+	eo := NewEnterpriseOrchestrator(cfg)
+	state := eo.CircuitBreakerState()
+	if state != resilience.CircuitClosed {
+		t.Errorf("circuit breaker state = %d, want CircuitClosed", state)
+	}
+}
+
+func TestEnterpriseOrchestratorTelemetryMetrics(t *testing.T) {
+	cfg := DefaultEnterpriseConfig()
+	cfg.CheckpointDir = t.TempDir()
+
+	eo := NewEnterpriseOrchestrator(cfg)
+	metrics := eo.TelemetryMetrics()
+	if metrics == nil {
+		t.Fatal("TelemetryMetrics returned nil")
+	}
+}
+
+func TestEnterpriseOrchestratorDLQStats(t *testing.T) {
+	cfg := DefaultEnterpriseConfig()
+	cfg.CheckpointDir = t.TempDir()
+	cfg.DLQDir = filepath.Join(t.TempDir(), "dlq")
+	os.MkdirAll(cfg.DLQDir, 0755)
+
+	eo := NewEnterpriseOrchestrator(cfg)
+	stats := eo.DLQStats()
+	if stats.TotalRecords != 0 {
+		t.Errorf("initial DLQ TotalRecords = %d, want 0", stats.TotalRecords)
+	}
+}
+
+func TestEnterpriseOrchestratorStatus(t *testing.T) {
+	cfg := DefaultEnterpriseConfig()
+	cfg.CheckpointDir = t.TempDir()
+
+	eo := NewEnterpriseOrchestrator(cfg)
+	status := eo.Status()
+	if !status.Healthy {
+		t.Error("status.Healthy should be true")
+	}
+}
+
+// --- Deduplicator tests ---
+
+func TestNewDeduplicator(t *testing.T) {
+	d := NewDeduplicator(DeduplicationConfig{
+		KeyColumns: []string{"case_id", "activity"},
+		Strategy:   DeduplicationSkip,
+	})
+	if d == nil {
+		t.Fatal("NewDeduplicator returned nil")
+	}
+}
+
+func TestDeduplicatorCheckAndAdd(t *testing.T) {
+	d := NewDeduplicator(DeduplicationConfig{
+		KeyColumns: []string{"id"},
+		Strategy:   DeduplicationSkip,
+	})
+
+	record := map[string]interface{}{"id": "1", "value": "a"}
+	dup := d.CheckAndAdd(record)
+	if dup {
+		t.Error("first record should not be duplicate")
+	}
+
+	dup = d.CheckAndAdd(record)
+	if !dup {
+		t.Error("second identical record should be duplicate")
+	}
+}
+
+func TestDeduplicatorStats(t *testing.T) {
+	d := NewDeduplicator(DeduplicationConfig{
+		KeyColumns: []string{"id"},
+		Strategy:   DeduplicationSkip,
+	})
+
+	d.CheckAndAdd(map[string]interface{}{"id": "1"})
+	d.CheckAndAdd(map[string]interface{}{"id": "2"})
+	d.CheckAndAdd(map[string]interface{}{"id": "1"}) // duplicate
+
+	stats := d.Stats()
+	if stats.TotalSeen != 3 {
+		t.Errorf("TotalSeen = %d, want 3", stats.TotalSeen)
+	}
+	if stats.Duplicates != 1 {
+		t.Errorf("Duplicates = %d, want 1", stats.Duplicates)
+	}
+}
+
+func TestDeduplicatorReset(t *testing.T) {
+	d := NewDeduplicator(DeduplicationConfig{
+		KeyColumns: []string{"id"},
+		Strategy:   DeduplicationSkip,
+	})
+
+	d.CheckAndAdd(map[string]interface{}{"id": "1"})
+	d.Reset()
+
+	dup := d.CheckAndAdd(map[string]interface{}{"id": "1"})
+	if dup {
+		t.Error("after Reset, record should not be duplicate")
+	}
+}
+
+func TestDeduplicateBatch(t *testing.T) {
+	records := []map[string]interface{}{
+		{"id": "1", "v": "a"},
+		{"id": "2", "v": "b"},
+		{"id": "1", "v": "c"},
+		{"id": "3", "v": "d"},
+	}
+
+	result := DeduplicateBatch(records, []string{"id"})
+	if len(result) != 3 {
+		t.Errorf("deduplicated batch len = %d, want 3", len(result))
+	}
+}
+
+// --- Guard against using wrong checkpoint package ---
+// The enterprise file uses its own Checkpoint struct (pipeline.Checkpoint)
+// and also references resilience.Checkpoint / checkpoint.Checkpoint.
+// We test both to ensure no confusion.
+
+func TestResilienceCheckpointUsedInPipeline(t *testing.T) {
+	cp := resilience.NewCheckpoint("in.csv", "out.parquet", "hash")
+	cp.Update(100, 10)
+	if !cp.ShouldResume() {
+		t.Error("resilience checkpoint should resume")
+	}
+}
+
+func TestCheckpointPackageManager(t *testing.T) {
+	dir := t.TempDir()
+	m, err := checkpoint.NewManager(dir)
+	if err != nil {
+		t.Fatalf("checkpoint.NewManager error: %v", err)
+	}
+	cp := m.Create("j1", "in.csv", "out.parquet")
+	if cp == nil {
+		t.Fatal("checkpoint.Create returned nil")
+	}
+}

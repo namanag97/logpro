@@ -1,0 +1,11 @@
+{
+  "id": "j1",
+  "input_path": "file.csv",
+  "output_path": "",
+  "bytes_read": 512,
+  "rows_written": 0,
+  "last_row_group": 0,
+  "phase": "",
+  "started_at": "0001-01-01T00:00:00Z",
+  "updated_at": "0001-01-01T00:00:00Z"
+}
