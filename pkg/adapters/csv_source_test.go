@@ -11,9 +11,9 @@ import (
 
 func TestCSVSource_BasicParsing(t *testing.T) {
 	cfg := pipeline.DefaultConfig()
-	cfg.CaseIDColumn = "case_id"
-	cfg.ActivityColumn = "activity"
-	cfg.TimestampColumn = "timestamp"
+	cfg.ColumnMapping["case_id"] = "case_id"
+	cfg.ColumnMapping["activity"] = "activity"
+	cfg.ColumnMapping["timestamp"] = "timestamp"
 
 	source, err := NewCSVSource(cfg)
 	if err != nil {
@@ -56,9 +56,9 @@ func TestCSVSource_BasicParsing(t *testing.T) {
 
 func TestCSVSource_ErrorPolicyStrict(t *testing.T) {
 	cfg := pipeline.DefaultConfig()
-	cfg.CaseIDColumn = "case_id"
-	cfg.ActivityColumn = "activity"
-	cfg.TimestampColumn = "timestamp"
+	cfg.ColumnMapping["case_id"] = "case_id"
+	cfg.ColumnMapping["activity"] = "activity"
+	cfg.ColumnMapping["timestamp"] = "timestamp"
 	cfg.ErrorPolicy = pipeline.ErrorPolicyStrict
 
 	source, err := NewCSVSource(cfg)
@@ -94,9 +94,9 @@ func TestCSVSource_ErrorPolicyStrict(t *testing.T) {
 
 func TestCSVSource_ErrorPolicySkip(t *testing.T) {
 	cfg := pipeline.DefaultConfig()
-	cfg.CaseIDColumn = "case_id"
-	cfg.ActivityColumn = "activity"
-	cfg.TimestampColumn = "timestamp"
+	cfg.ColumnMapping["case_id"] = "case_id"
+	cfg.ColumnMapping["activity"] = "activity"
+	cfg.ColumnMapping["timestamp"] = "timestamp"
 	cfg.ErrorPolicy = pipeline.ErrorPolicySkip
 
 	var skippedRows []int64
@@ -145,9 +145,9 @@ func TestCSVSource_ErrorPolicySkip(t *testing.T) {
 
 func TestCSVSource_QuotedFields(t *testing.T) {
 	cfg := pipeline.DefaultConfig()
-	cfg.CaseIDColumn = "case_id"
-	cfg.ActivityColumn = "activity"
-	cfg.TimestampColumn = "timestamp"
+	cfg.ColumnMapping["case_id"] = "case_id"
+	cfg.ColumnMapping["activity"] = "activity"
+	cfg.ColumnMapping["timestamp"] = "timestamp"
 
 	source, err := NewCSVSource(cfg)
 	if err != nil {
@@ -182,9 +182,9 @@ func TestCSVSource_QuotedFields(t *testing.T) {
 
 func TestCSVSource_ProgressCallback(t *testing.T) {
 	cfg := pipeline.DefaultConfig()
-	cfg.CaseIDColumn = "case_id"
-	cfg.ActivityColumn = "activity"
-	cfg.TimestampColumn = "timestamp"
+	cfg.ColumnMapping["case_id"] = "case_id"
+	cfg.ColumnMapping["activity"] = "activity"
+	cfg.ColumnMapping["timestamp"] = "timestamp"
 
 	var progressCalls int
 	cfg.OnProgress = func(rows, bytes int64) {
@@ -222,9 +222,9 @@ func TestCSVSource_ProgressCallback(t *testing.T) {
 
 func TestCSVSource_MissingColumns(t *testing.T) {
 	cfg := pipeline.DefaultConfig()
-	cfg.CaseIDColumn = "case_id"
-	cfg.ActivityColumn = "activity"
-	cfg.TimestampColumn = "timestamp"
+	cfg.ColumnMapping["case_id"] = "case_id"
+	cfg.ColumnMapping["activity"] = "activity"
+	cfg.ColumnMapping["timestamp"] = "timestamp"
 
 	source, err := NewCSVSource(cfg)
 	if err != nil {
@@ -262,9 +262,9 @@ func TestCSVSource_MissingColumns(t *testing.T) {
 
 func TestCSVSource_ContextCancellation(t *testing.T) {
 	cfg := pipeline.DefaultConfig()
-	cfg.CaseIDColumn = "case_id"
-	cfg.ActivityColumn = "activity"
-	cfg.TimestampColumn = "timestamp"
+	cfg.ColumnMapping["case_id"] = "case_id"
+	cfg.ColumnMapping["activity"] = "activity"
+	cfg.ColumnMapping["timestamp"] = "timestamp"
 
 	source, err := NewCSVSource(cfg)
 	if err != nil {
