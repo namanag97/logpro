@@ -120,6 +120,22 @@ func Generate(parquetPath string, rowCount int64, cfg ContractConfig) (*Contract
 
 	absPath, _ := filepath.Abs(parquetPath)
 
+	// Build schema columns from mapping (if provided)
+	var schemaCols []Column
+	var requiredCols []string
+	for _, role := range []string{"case_id", "activity", "timestamp", "resource"} {
+		col := cfg.Column(role)
+		nullable := role == "resource"
+		colType := "string"
+		if role == "timestamp" {
+			colType = "int64"
+		}
+		schemaCols = append(schemaCols, Column{Name: col, Type: colType, Nullable: nullable, Role: role})
+		if !nullable {
+			requiredCols = append(requiredCols, col)
+		}
+	}
+
 	contract := &Contract{
 		Version: "1.0",
 		File: FileInfo{
@@ -130,12 +146,7 @@ func Generate(parquetPath string, rowCount int64, cfg ContractConfig) (*Contract
 			RowCount:  rowCount,
 		},
 		Schema: Schema{
-			Columns: []Column{
-				{Name: cfg.CaseIDColumn, Type: "string", Nullable: false, Role: "case_id"},
-				{Name: cfg.ActivityColumn, Type: "string", Nullable: false, Role: "activity"},
-				{Name: cfg.TimestampColumn, Type: "int64", Nullable: false, Role: "timestamp"},
-				{Name: cfg.ResourceColumn, Type: "string", Nullable: true, Role: "resource"},
-			},
+			Columns: schemaCols,
 		},
 		SLO: SLO{
 			NullTolerance:   cfg.NullTolerance,
@@ -143,7 +154,7 @@ func Generate(parquetPath string, rowCount int64, cfg ContractConfig) (*Contract
 			UniqueCase:      false,
 			MinEvents:       0,
 			MaxEvents:       0,
-			RequiredColumns: []string{cfg.CaseIDColumn, cfg.ActivityColumn, cfg.TimestampColumn},
+			RequiredColumns: requiredCols,
 		},
 		Generated: GeneratedInfo{
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
