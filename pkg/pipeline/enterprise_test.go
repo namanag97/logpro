@@ -544,7 +544,7 @@ func TestDeduplicatorCheckAndAdd(t *testing.T) {
 func TestDeduplicatorStats(t *testing.T) {
 	d := NewDeduplicator(DeduplicationConfig{
 		KeyColumns: []string{"id"},
-		Strategy:   DeduplicationSkip,
+		Strategy:   DeduplicationKeepFirst,
 	})
 
 	d.CheckAndAdd(map[string]interface{}{"id": "1"})
