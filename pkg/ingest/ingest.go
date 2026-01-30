@@ -178,6 +178,55 @@ func (e *Engine) Ingest(ctx context.Context, inputPath string, opts Options) (*R
 	return result, nil
 }
 
+// IngestSource processes a source (file, HTTP, etc.) and converts it to Parquet.
+// The sourceURI can be:
+//   - a local file path
+//   - file:///path/to/file
+//   - http:// or https:// URL
+func (e *Engine) IngestSource(ctx context.Context, sourceURI string, opts Options) (*Result, error) {
+	// Detect scheme
+	switch {
+	case strings.HasPrefix(sourceURI, "http://") || strings.HasPrefix(sourceURI, "https://"):
+		return e.ingestHTTP(ctx, sourceURI, opts)
+	case strings.HasPrefix(sourceURI, "file://"):
+		localPath := strings.TrimPrefix(sourceURI, "file://")
+		return e.Ingest(ctx, localPath, opts)
+	default:
+		// Assume local file path
+		return e.Ingest(ctx, sourceURI, opts)
+	}
+}
+
+// ingestHTTP downloads from HTTP and ingests.
+func (e *Engine) ingestHTTP(ctx context.Context, rawURL string, opts Options) (*Result, error) {
+	src, err := sources.NewHTTPSource(rawURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("invalid HTTP source: %w", err)
+	}
+
+	// Download to temp file, then ingest
+	reader, err := src.Open(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open HTTP source: %w", err)
+	}
+	defer reader.Close()
+
+	tmpFile, err := os.CreateTemp("", "logflow-http-*.dat")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temp file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
+
+	if _, err := io.Copy(tmpFile, reader); err != nil {
+		tmpFile.Close()
+		return nil, fmt.Errorf("failed to download: %w", err)
+	}
+	tmpFile.Close()
+
+	return e.Ingest(ctx, tmpPath, opts)
+}
+
 // processStreaming handles large files with chunked processing.
 func (e *Engine) processStreaming(ctx context.Context, inputPath, outputPath string, analysis *FileAnalysis, opts Options) (*Result, error) {
 	// For now, delegate to robust path with streaming enabled
