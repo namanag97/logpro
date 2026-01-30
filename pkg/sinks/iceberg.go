@@ -129,8 +129,22 @@ type ManifestEntry struct {
 	DataFile DataFile `json:"data_file"`
 }
 
-// NewIcebergSink creates a new Iceberg table sink.
+// NewIcebergSink creates a new Iceberg table sink with the default
+// process-mining schema (case_id, activity, timestamp, resource).
 func NewIcebergSink(cfg pipeline.Config) (*IcebergSink, error) {
+	schema := arrow.NewSchema([]arrow.Field{
+		{Name: "case_id", Type: arrow.BinaryTypes.String, Nullable: false},
+		{Name: "activity", Type: arrow.BinaryTypes.String, Nullable: false},
+		{Name: "timestamp", Type: arrow.PrimitiveTypes.Int64, Nullable: false},
+		{Name: "resource", Type: arrow.BinaryTypes.String, Nullable: true},
+	}, nil)
+	return NewIcebergSinkWithSchema(cfg, schema)
+}
+
+// NewIcebergSinkWithSchema creates an Iceberg sink with a caller-provided
+// Arrow schema. This allows writing any set of columns, not just the
+// process-mining defaults.
+func NewIcebergSinkWithSchema(cfg pipeline.Config, schema *arrow.Schema) (*IcebergSink, error) {
 	tableDir := cfg.SinkPath
 	if tableDir == "" {
 		return nil, fmt.Errorf("sink path (table directory) required for Iceberg")
@@ -148,36 +162,40 @@ func NewIcebergSink(cfg pipeline.Config) (*IcebergSink, error) {
 	}
 
 	allocator := memory.NewGoAllocator()
-	schema := arrow.NewSchema([]arrow.Field{
-		{Name: "case_id", Type: arrow.BinaryTypes.String, Nullable: false},
-		{Name: "activity", Type: arrow.BinaryTypes.String, Nullable: false},
-		{Name: "timestamp", Type: arrow.PrimitiveTypes.Int64, Nullable: false},
-		{Name: "resource", Type: arrow.BinaryTypes.String, Nullable: true},
-	}, nil)
 
-	sink := &IcebergSink{
-		cfg:              cfg,
-		tableDir:         tableDir,
-		allocator:        allocator,
-		schema:           schema,
-		caseIDBuilder:    array.NewStringBuilder(allocator),
-		activityBuilder:  array.NewStringBuilder(allocator),
-		timestampBuilder: array.NewInt64Builder(allocator),
-		resourceBuilder:  array.NewStringBuilder(allocator),
-		snapshotID:       time.Now().UnixMilli(),
+	// Build dynamic builders from schema
+	builders := make([]array.Builder, schema.NumFields())
+	for i, field := range schema.Fields() {
+		switch field.Type.ID() {
+		case arrow.INT64:
+			builders[i] = array.NewInt64Builder(allocator)
+		case arrow.FLOAT64:
+			builders[i] = array.NewFloat64Builder(allocator)
+		case arrow.BOOL:
+			builders[i] = array.NewBooleanBuilder(allocator)
+		case arrow.TIMESTAMP:
+			builders[i] = array.NewTimestampBuilder(allocator, &arrow.TimestampType{Unit: arrow.Microsecond})
+		default:
+			builders[i] = array.NewStringBuilder(allocator)
+		}
 	}
 
-	// Reserve capacity
 	batchSize := cfg.BatchSize
 	if batchSize <= 0 {
 		batchSize = 8192
 	}
-	sink.caseIDBuilder.Reserve(batchSize)
-	sink.activityBuilder.Reserve(batchSize)
-	sink.timestampBuilder.Reserve(batchSize)
-	sink.resourceBuilder.Reserve(batchSize)
+	for _, b := range builders {
+		b.Reserve(batchSize)
+	}
 
-	return sink, nil
+	return &IcebergSink{
+		cfg:        cfg,
+		tableDir:   tableDir,
+		allocator:  allocator,
+		schema:     schema,
+		builders:   builders,
+		snapshotID: time.Now().UnixMilli(),
+	}, nil
 }
 
 // Name returns the adapter name.
