@@ -43,22 +43,23 @@ func (p *DuckDBPipeline) IngestCSV(ctx context.Context, inputPath, outputPath st
 	}
 	defer reader.Close()
 
-	// Add standard process mining metadata
+	// Add column mapping metadata (only for configured roles)
 	metadata := make(map[string]string)
 	for k, v := range p.metadata {
 		metadata[k] = v
 	}
-	metadata["pm:case_id"] = p.parserCfg.CaseIDColumn
-	metadata["pm:activity"] = p.parserCfg.ActivityColumn
-	metadata["pm:timestamp"] = p.parserCfg.TimestampColumn
-	metadata["pm:resource"] = p.parserCfg.ResourceColumn
+	for _, role := range []string{"case_id", "activity", "timestamp", "resource"} {
+		if col := p.parserCfg.Column(role); col != "" {
+			metadata["pm:"+role] = col
+		}
+	}
 
 	result, err := reader.ConvertCSVToParquet(
 		inputPath, outputPath,
-		p.parserCfg.CaseIDColumn,
-		p.parserCfg.ActivityColumn,
-		p.parserCfg.TimestampColumn,
-		p.parserCfg.ResourceColumn,
+		p.parserCfg.Column("case_id"),
+		p.parserCfg.Column("activity"),
+		p.parserCfg.Column("timestamp"),
+		p.parserCfg.Column("resource"),
 		p.writerCfg.Compression,
 		metadata,
 	)
