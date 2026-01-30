@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/logflow/logflow/pkg/core"
 	"github.com/logflow/logflow/pkg/ingest/detect"
 	"github.com/logflow/logflow/pkg/ingest/flow"
 )
