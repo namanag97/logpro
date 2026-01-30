@@ -1,401 +1,235 @@
-# Codebase Audit: What We Have vs What We Need
+# Codebase Audit: Static Reachability Analysis
 
 > Audit date: 2026-01-30
-> Codebase: ~96 Go files, ~48K lines in `pkg/`, ~618K total (incl. generated)
+> Method: `go list -deps` transitive dependency analysis from `cmd/logflow` binary entry point, plus `grep` import tracing for every package.
 
 ---
 
-## Codebase Map (What Exists Today)
+## How the Two Code Paths Actually Work
 
+The codebase has **two legitimate, non-duplicate paths** serving different use cases:
+
+### Path 1: CLI (local file conversion)
 ```
-logpro/
-├── cmd/logflow/                 # CLI + Web server entry point
-│   ├── main.go                  # Cobra CLI: convert, info, schema, apply, profiles
-│   ├── serve.go                 # HTTP server with embedded web UI
-│   ├── commands.go              # Additional CLI commands
-│   ├── ingest_cmd.go            # Ingest subcommand
-│   ├── pipeline_runner.go       # Pipeline execution glue
-│   ├── benchmark.go             # Benchmarking command
-│   └── web/index.html           # Embedded HTML UI
-│
-├── internal/
-│   ├── pipe/                    # Original pipeline (DuckDB + Arrow paths)
-│   │   ├── pipeline.go          # Arrow-based pipeline
-│   │   └── duckdb_pipe.go       # DuckDB-based pipeline
-│   ├── model/event.go           # Event model
-│   └── pool/                    # Worker pool, helpers, timestamp utils
-│
-├── pkg/
-│   ├── ingest/                  # [53 files] ← LARGEST package
-│   │   ├── core/                # Source, Sink, Decoder interfaces (Arrow-native)
-│   │   ├── decoders/            # CSV, JSON, XES, Parquet, DuckDB decoders
-│   │   ├── sources/             # File, memory, stream, HTTP, glob sources
-│   │   ├── sinks/               # Parquet, Arrow IPC, Iceberg sinks
-│   │   ├── schema/              # Inference, evolution, OCEL mapping, policy
-│   │   ├── flow/                # Backpressure, rate limiter, concurrency
-│   │   ├── quality/             # Cardinality, checksum, validator, entropy
-│   │   ├── errors/              # Stream errors, policy, quarantine
-│   │   ├── telemetry/           # Metrics, benchmark, optimizer
-│   │   ├── hooks/               # Lifecycle hooks
-│   │   ├── detect/              # Format detection: encoding, delimiter, format
-│   │   ├── heuristics/          # Decision engine
-│   │   ├── pipeline.go          # Pipeline orchestrator (FastPath + RobustPath)
-│   │   ├── streaming.go         # StreamingPipeline (Arrow-native)
-│   │   ├── fast_path.go         # DuckDB fast path
-│   │   ├── robust_path.go       # Pure Go robust path
-│   │   ├── detect.go            # File analysis/detection
-│   │   ├── quality.go           # Quality checks
-│   │   ├── heuristics.go        # Heuristic computation
-│   │   └── unified_config.go    # Configuration
-│   │
-│   ├── pipeline/                # [10 files] ← SECOND pipeline system
-│   │   ├── interfaces.go        # Source/Sink/Processor/Inspector (Event-based)
-│   │   ├── orchestrator.go      # V1 orchestrator (channel pipeline)
-│   │   ├── orchestrator_v2.go   # V2 orchestrator (errgroup, metrics)
-│   │   ├── dlq.go               # Dead Letter Queue
-│   │   ├── checkpoint.go        # Checkpointing
-│   │   ├── dedup.go             # Deduplication
-│   │   ├── enterprise.go        # Enterprise features
-│   │   └── errors.go/test       # Error types, tests
-│   │
-│   ├── server/                  # HTTP server (web UI backend)
-│   ├── api/rest/                # REST API (handlers, middleware)
-│   ├── storage/                 # S3, catalog, object store, table, compaction
-│   ├── checkpoint/              # Checkpoint backends (local, Redis, S3)
-│   ├── schema/                  # Schema policy + cache
-│   ├── parser/                  # Parser + healing/auto-fix (11 files)
-│   ├── ocel/                    # OCEL process mining model
-│   ├── pmpt/                    # Process mining performance tree
-│   ├── telemetry/               # OTEL exporter + metrics
-│   ├── config/                  # Global config
-│   ├── quality/                 # Quality validator
-│   ├── validation/quality/      # Validation quality rules
-│   ├── inspect/                 # Quality inspector
-│   ├── contract/                # Data contracts
-│   ├── diff/                    # Diff engine
-│   ├── sinks/                   # Iceberg sink (standalone)
-│   ├── tui/                     # Terminal UI wizard
-│   ├── writer/                  # Parquet writer
-│   ├── transform/               # Transform system
-│   ├── processors/              # Processor implementations
-│   ├── adapters/                # Adapter layer
-│   ├── plugins/                 # Process mining + quality plugins
-│   ├── hooks/                   # Hooks system
-│   ├── interfaces/              # Interface definitions
-│   ├── registry/                # Component registry
-│   ├── defaults/                # Default implementations (auth, metrics, scheduler, tracer, alerting)
-│   ├── state/                   # State store
-│   ├── lifecycle/               # Lifecycle management
-│   ├── resilience/              # Resilience patterns
-│   ├── runtime/                 # Runtime utilities
-│   ├── perf/                    # Profiler
-│   ├── export/                  # Export utilities
-│   ├── index/                   # Indexing
-│   ├── watch/                   # File watching
-│   ├── turbo/                   # Turbo converter
-│   ├── core/                    # Core plugins + convert
-│   ├── heuristic/               # Heuristic optimizer
-│   ├── errors/                  # Error types
-│   ├── profile/                 # Profile management
-│   ├── util/                    # Reader utilities
-│   ├── testing/                 # Test generators + roundtrip
-│   └── ingest_backup/           # Backup (empty)
+cmd/logflow/main.go
+  → runConvert()
+    → runDuckDBConvert()  ← CSV always takes this path (or --duckdb flag)
+        → internal/pipe.NewDuckDBPipeline()
+            → DuckDB SQL engine for CSV/JSON → Parquet
+    → runArrowConvert()   ← XES, stdin, non-CSV
+        → internal/pipe.NewPipeline()
+            → pkg/parser → pkg/writer (Arrow-based)
 ```
+
+### Path 2: Web Server (HTTP upload → conversion)
+```
+cmd/logflow/serve.go
+  → server.NewServer()
+    → pkg/core.NewConverter()  ← Also uses DuckDB (sql.Open("duckdb", ""))
+        → core.Convert() dispatches by format:
+            CSV  → DuckDB SQL
+            JSON → DuckDB SQL
+            XLSX → DuckDB SQL
+            Parquet → DuckDB copy
+```
+
+**Finding:** Both paths currently use DuckDB. The server path uses it through `pkg/core/convert.go:62` which calls `sql.Open("duckdb", "")`. The CLI path uses it through `internal/pipe/duckdb_pipe.go`.
 
 ---
 
-## PROBLEM 1: Two Competing Pipeline Architectures
+## Reachability Results
 
-This is the root issue. There are two separate pipeline systems that don't share interfaces.
+### Tier 1 — LIVE (reachable from the compiled binary)
 
-### Pipeline A: `pkg/pipeline/` (Event-Based)
-```go
-// Uses *Event flowing through channels
-type Source interface {
-    Read(ctx context.Context, r io.Reader, out chan<- *Event) error
-}
-type Sink interface {
-    Write(ctx context.Context, in <-chan *Event) error
-}
-type Processor interface {
-    Process(ctx context.Context, in <-chan *Event, out chan<- *Event) error
-}
+37 packages are transitively reachable from `cmd/logflow`:
+
 ```
-- Has: Orchestrator V1 + V2, DLQ, checkpoint, dedup, rate limiter, builder pattern
-- Strength: Clean pipeline pattern, errgroup coordination, production error handling
-- Weakness: Event-based (not Arrow-native), process-mining-coupled (CaseID, Activity, Timestamp in Config)
-
-### Pipeline B: `pkg/ingest/` (Arrow-Native)
-```go
-// Uses Arrow RecordBatches
-type Source interface {
-    Open(ctx context.Context) (io.ReadCloser, error)
-}
-type Decoder interface {
-    Decode(ctx context.Context, source Source, opts DecodeOptions) (<-chan DecodedBatch, error)
-}
-type Sink interface {
-    Write(ctx context.Context, batch arrow.Record) error
-}
+cmd/logflow              ← entry point
+internal/model           ← Event model
+internal/pipe            ← Pipeline (DuckDB + Arrow)
+internal/pool            ← Worker pool, helpers
+pkg/adapters             ← Adapter layer
+pkg/checkpoint           ← Checkpoint backends (local, Redis, S3)
+pkg/config               ← Global config
+pkg/contract             ← Data contracts
+pkg/core                 ← Zero-config converter (DuckDB-based)
+pkg/diff                 ← Diff engine
+pkg/errors               ← Error types
+pkg/export               ← Export utilities
+pkg/ingest               ← Ingestion pipeline (FastPath + RobustPath)
+pkg/ingest/core          ← Source/Sink/Decoder interfaces (Arrow-native)
+pkg/ingest/decoders      ← CSV, JSON, XES, Parquet, DuckDB decoders
+pkg/ingest/hooks         ← Lifecycle hooks
+pkg/ingest/schema        ← Inference, evolution, OCEL mapping, policy
+pkg/ingest/telemetry     ← Metrics, benchmark, optimizer
+pkg/inspect              ← Quality inspector
+pkg/interfaces           ← Interface definitions
+pkg/lifecycle            ← Lifecycle management
+pkg/parser               ← Parser (CSV, XES, JSON)
+pkg/pipeline             ← Orchestrator V1+V2, DLQ, checkpoint, dedup
+pkg/plugins/processmining← Process mining plugin
+pkg/plugins/quality      ← Quality plugin
+pkg/pmpt                 ← Process mining performance tree
+pkg/processors           ← Processor implementations
+pkg/profile              ← Profile management
+pkg/registry             ← Component registry
+pkg/resilience           ← Resilience patterns
+pkg/server               ← HTTP server (web UI backend)
+pkg/telemetry            ← OTEL exporter + metrics
+pkg/transform            ← Transform system
+pkg/tui                  ← Terminal UI wizard
+pkg/util                 ← Reader utilities
+pkg/watch                ← File watching
+pkg/writer               ← Parquet writer
 ```
-- Has: Decoders (CSV/JSON/XES/Parquet/DuckDB), format detection, heuristics, schema inference/evolution, flow control, quality, telemetry
-- Strength: Arrow-native, format-aware, performance-oriented (FastPath/RobustPath)
-- Weakness: No unified orchestrator tying decode→transform→write. Pipeline.Process() is file-centric, not streaming.
 
-### Verdict
-Pipeline B has the right data model (Arrow). Pipeline A has the right orchestration pattern (channel pipeline with errgroup). Neither is complete alone.
+### Tier 2 — TEST-ONLY (imported only by root test_*.go or pkg/logflow.go)
 
----
+These packages are **not in the binary** but are used by standalone test harnesses or the library facade:
 
-## PROBLEM 2: Duplicate Subsystems
-
-| Concern | Location 1 | Location 2 | Location 3 |
-|---|---|---|---|
-| **Source interface** | `pkg/pipeline/interfaces.go` | `pkg/ingest/core/source.go` | — |
-| **Sink interface** | `pkg/pipeline/interfaces.go` | `pkg/ingest/core/sink.go` | `pkg/sinks/iceberg.go` |
-| **Schema** | `pkg/schema/` | `pkg/ingest/schema/` | — |
-| **Quality** | `pkg/quality/` | `pkg/inspect/` | `pkg/validation/quality/` + `pkg/ingest/quality/` |
-| **Errors** | `pkg/errors/` | `pkg/pipeline/errors.go` | `pkg/ingest/errors/` |
-| **Checkpoint** | `pkg/pipeline/checkpoint.go` | `pkg/checkpoint/` | — |
-| **Heuristics** | `pkg/heuristic/` | `pkg/ingest/heuristics/` + `pkg/ingest/heuristics.go` | — |
-| **Hooks** | `pkg/hooks/` | `pkg/ingest/hooks/` | — |
-
----
-
-## PROBLEM 3: Too Many Entry Points
-
-| Surface | Location | How it Works |
+| Package | Imported By | Lines |
 |---|---|---|
-| **CLI** | `cmd/logflow/main.go` | Cobra commands → `internal/pipe/` directly |
-| **TUI Wizard** | `pkg/tui/cli.go` | Interactive wizard → sets CLI flags → runs CLI |
-| **Web UI** | `cmd/logflow/serve.go` + `pkg/server/` | Embedded HTML + SSE → calls server logic |
-| **REST API** | `pkg/api/rest/` | Separate HTTP handlers → unclear what pipeline they call |
-| **Library API** | `pkg/ingest/` | Direct Go API → `Pipeline.Process()` |
+| `pkg/api/rest` | test_full_integration.go, test_e2e.go | ~200 |
+| `pkg/defaults/alerting` | pkg/logflow.go | ~100 |
+| `pkg/defaults/auth` | pkg/logflow.go, test_*.go | ~100 |
+| `pkg/defaults/metrics` | pkg/logflow.go | ~100 |
+| `pkg/defaults/scheduler` | pkg/logflow.go | ~100 |
+| `pkg/defaults/tracer` | pkg/logflow.go | ~100 |
+| `pkg/ingest/sinks` | test_precommit.go, test_all_xes.go | ~300 |
+| `pkg/query/engine` | test_*.go, pkg/logflow.go | ~200 |
+| `pkg/storage/catalog` | test_full_integration.go, pkg/logflow.go | ~150 |
+| `pkg/storage/object` | pkg/logflow.go | ~100 |
+| `pkg/testing/generators` | test_*.go | ~200 |
 
-These are wired to different backends. The CLI calls `internal/pipe/`, the web calls `pkg/server/`, and the library API calls `pkg/ingest/`. There's no single pipeline engine underneath them all.
+**Verdict:** These are legitimate — they're the library API (`pkg/logflow.go`) and integration test infrastructure. Not dead code, but not compiled into the CLI binary either.
 
----
+### Tier 3 — DEAD CODE (zero importers anywhere in the codebase)
 
-## PROBLEM 4: Process Mining Coupling
+**27 packages, 18,412 lines** imported by nothing — not by the binary, not by tests, not by each other.
 
-The pipeline Config hard-codes process mining concepts:
-```go
-CaseIDColumn    string  // Process mining specific
-ActivityColumn  string  // Process mining specific
-TimestampColumn string  // Process mining specific
-ResourceColumn  string  // Process mining specific
+| Package | Lines | Files | What It Contains |
+|---|---|---|---|
+| `pkg/storage` | 2,775 | 7 | Cloud storage abstraction layer |
+| `pkg/ocel` | 1,722 | 4 | OCEL 2.0 process mining model + discovery |
+| `pkg/parser/healing` | 1,597 | 3 | Auto-fix broken CSV/JSON (detector, rules, fixer) |
+| `pkg/storage/s3` | 1,138 | 2 | S3 client with select support |
+| `pkg/schema` | 1,010 | 3 | Schema policy + cache (separate from `pkg/ingest/schema`) |
+| `pkg/validation` | 840 | 2 | Validation framework |
+| `pkg/compaction` | 818 | 2 | Parquet file compactor |
+| `pkg/ingest/detect` | 690 | 4 | Format detection (encoding, delimiter, format) |
+| `pkg/ingest/sources` | 565 | 5 | File, memory, stream, HTTP, glob sources |
+| `pkg/validation/quality` | 535 | 1 | Quality validation rules |
+| `pkg/sinks` | 522 | 1 | Standalone Iceberg sink |
+| `pkg/ingest/flow` | 520 | 3 | Backpressure, rate limiter, concurrency |
+| `pkg/state` | 515 | 1 | State store |
+| `pkg/ingest/errors` | 505 | 3 | Stream errors, policy, quarantine |
+| `pkg/hooks` | 497 | 2 | Hooks system |
+| `pkg/perf` | 490 | 1 | Profiler |
+| `pkg/ingest/quality` | 423 | 4 | Cardinality, checksum, validator, entropy |
+| `pkg/quality` | 410 | 1 | Quality validator |
+| `pkg/storage/maintenance` | 396 | 1 | Compaction maintenance |
+| `pkg/testing/roundtrip` | 371 | 1 | Roundtrip test utilities |
+| `pkg/turbo` | 361 | 1 | Turbo converter |
+| `pkg/index` | 343 | 1 | Indexing |
+| `pkg/runtime` | 283 | 1 | Runtime utilities |
+| `pkg/heuristic` | 283 | 1 | Heuristic optimizer |
+| `pkg/ingest/heuristics` | 278 | 2 | Decision engine |
+| `pkg/storage/table` | 268 | 1 | Table management |
+| `pkg/query/cache` | 257 | 1 | Query cache |
+
+**Total dead: 18,412 lines across 27 packages.**
+
+Additionally, **6 root-level test files** (4,578 lines) are standalone `main` packages that can't run with `go test`:
+```
+test_precommit.go       2,189 lines
+test_comprehensive.go     844 lines
+test_e2e.go               614 lines
+test_full_integration.go  388 lines
+test_telemetry.go         233 lines
+test_all_xes.go           165 lines
+test_xes_verify.go         67 lines
+speedtest.go               78 lines
 ```
 
-This leaks into interfaces, decoders, and the CLI. For a general-purpose ingestion library, these should be an optional plugin/transform — not baked into the core.
+---
+
+## Categorizing the Dead Code
+
+Not all dead code is worthless. Some was built for future use and should be wired in. Some is genuinely orphaned.
+
+### Category A — Built for the Future (valuable, needs wiring)
+
+These are real implementations of things the pipeline design document says we need. They just aren't connected yet.
+
+| Package | Lines | What to Do |
+|---|---|---|
+| `pkg/ingest/sources` | 565 | Wire into unified pipeline (file, HTTP, stream, glob sources) |
+| `pkg/ingest/flow` | 520 | Wire into pipeline engine (backpressure, rate limiting) |
+| `pkg/ingest/detect` | 690 | Wire into pipeline (format auto-detection) |
+| `pkg/ingest/quality` | 423 | Wire into pipeline (quality validation step) |
+| `pkg/ingest/errors` | 505 | Wire into pipeline (error handling, quarantine) |
+| `pkg/ingest/heuristics` | 278 | Wire into pipeline (strategy selection) |
+| `pkg/sinks` (Iceberg) | 522 | Wire as output sink |
+| `pkg/compaction` | 818 | Wire as post-write maintenance |
+| `pkg/storage/s3` | 1,138 | Wire as storage backend |
+| `pkg/storage/table` | 268 | Wire as table management |
+| `pkg/storage/maintenance` | 396 | Wire for compaction |
+| `pkg/schema` | 1,010 | Merge with `pkg/ingest/schema` or delete |
+| `pkg/state` | 515 | Wire as pipeline state tracking |
+| **Subtotal** | **7,648** | |
+
+### Category B — Process Mining Specific (keep as plugin, not wired yet)
+
+| Package | Lines | What to Do |
+|---|---|---|
+| `pkg/ocel` | 1,722 | Keep — move to `plugin/processmining/` |
+| `pkg/parser/healing` | 1,597 | Keep — useful for dirty CSV recovery |
+| **Subtotal** | **3,319** | |
+
+### Category C — Duplicate or Superseded (safe to delete)
+
+| Package | Lines | Why Dead |
+|---|---|---|
+| `pkg/quality` | 410 | Duplicate of `pkg/ingest/quality` |
+| `pkg/validation` | 840 | No importers, overlaps with quality packages |
+| `pkg/validation/quality` | 535 | No importers, overlaps with quality packages |
+| `pkg/heuristic` | 283 | Duplicate of `pkg/ingest/heuristics` |
+| `pkg/hooks` | 497 | Duplicate of `pkg/ingest/hooks` |
+| `pkg/turbo` | 361 | Superseded by `pkg/core` converter |
+| `pkg/runtime` | 283 | Generic runtime utils, unused |
+| `pkg/index` | 343 | Indexing — never connected |
+| `pkg/perf` | 490 | Profiler — never connected |
+| `pkg/query/cache` | 257 | Query cache — never connected |
+| `pkg/testing/roundtrip` | 371 | Test util — no test uses it |
+| `pkg/storage` (root) | 2,775 | Abstraction layer — nothing imports the root, sub-packages handle it |
+| **Subtotal** | **7,445** | |
 
 ---
 
-## PROBLEM 5: Root-Level Test Files
-
-Six standalone test files at the project root:
-```
-test_precommit.go    (2189 lines)
-test_all_xes.go
-test_comprehensive.go
-test_e2e.go
-test_full_integration.go
-test_telemetry.go
-test_xes_verify.go
-speedtest.go
-```
-These are standalone `main` packages, not `_test.go` files. They can't be run with `go test` and don't integrate with CI.
-
----
-
-## CHECKLIST: What We Have vs What We Need
-
-### Layer 1 — I/O (Sources & Sinks)
-
-| Component | Have? | Where | Quality | Needed |
-|---|---|---|---|---|
-| **Source interface (Arrow-native)** | YES | `pkg/ingest/core/source.go` | Good | Needs `Read() → (RawMessage, Ack, error)` for streaming |
-| **Sink interface (Arrow-native)** | YES | `pkg/ingest/core/sink.go` | Good | Keep as-is |
-| **Decoder interface** | YES | `pkg/ingest/core/decoder.go` | Good | Keep as-is |
-| **File source** | YES | `pkg/ingest/sources/file.go` | OK | Keep |
-| **HTTP source** | YES | `pkg/ingest/sources/http.go` | OK | Keep |
-| **Memory source** | YES | `pkg/ingest/sources/memory.go` | OK | Keep |
-| **Stream source** | YES | `pkg/ingest/sources/stream.go` | Basic | Needs Kafka/MQTT/NATS support |
-| **Glob source** | YES | `pkg/ingest/sources/glob.go` | OK | Keep |
-| **S3 source** | PARTIAL | `pkg/storage/s3/` | Has client | Needs Source interface wrapper |
-| **Kafka source** | NO | — | — | **BUILD** (P1) |
-| **MQTT source** | NO | — | — | **BUILD** (P2) |
-| **Postgres CDC source** | NO | — | — | **BUILD** (P1) |
-| **MySQL CDC source** | NO | — | — | **BUILD** (P1) |
-| **Webhook source** | NO | — | — | **BUILD** (P2) |
-| **CSV decoder** | YES | `pkg/ingest/decoders/csv.go` | 574 lines, solid | Keep |
-| **JSON decoder** | YES | `pkg/ingest/decoders/json.go` | 480 lines, solid | Keep |
-| **XES decoder** | YES | `pkg/ingest/decoders/xes.go` | 826 lines | Move to plugin (process mining specific) |
-| **Parquet decoder** | YES | `pkg/ingest/decoders/parquet.go` | OK | Keep |
-| **DuckDB decoder** | YES | `pkg/ingest/decoders/duckdb.go` | OK | Keep as fast-path option |
-| **Avro decoder** | NO | — | — | **BUILD** (P0) |
-| **Protobuf decoder** | NO | — | — | **BUILD** (P0) |
-| **Excel decoder** | NO | — | Format enum exists | **BUILD** (P2) |
-| **Decoder registry** | YES | `pkg/ingest/decoders/registry.go` | Good | Keep |
-| **Parquet sink** | YES | `pkg/ingest/sinks/parquet.go` | OK | Keep, tune parameters |
-| **Arrow IPC sink** | YES | `pkg/ingest/sinks/arrow_ipc.go` | OK | Keep |
-| **Iceberg sink** | YES | `pkg/sinks/iceberg.go` (522 lines) | Minimal | **REWRITE** — needs real catalog integration |
-| **Iceberg sink (ingest)** | YES | `pkg/ingest/sinks/iceberg.go` | Duplicate | **MERGE** with above |
-
-### Layer 2 — Core Transport
-
-| Component | Have? | Where | Quality | Needed |
-|---|---|---|---|---|
-| **Arrow record batches** | YES | `pkg/ingest/core/batch.go` | Good | Keep |
-| **BatchPool (sync.Pool)** | YES | `pkg/ingest/core/batch.go` | Good | Keep |
-| **BatchAccumulator** | YES | `pkg/ingest/core/batch.go` | Basic | Needs size-based flush (MB threshold) |
-| **Bounded channel pipeline** | YES | `pkg/pipeline/orchestrator.go` | Good pattern | Port to Arrow-native types |
-| **Backpressure** | YES | `pkg/ingest/flow/backpressure.go` | OK | Keep |
-| **Rate limiter** | YES | `pkg/ingest/flow/rate_limiter.go` + `pkg/pipeline/orchestrator_v2.go` | Duplicate | **MERGE** |
-| **Concurrency control** | YES | `pkg/ingest/flow/concurrency.go` | OK | Keep |
-
-### Layer 3 — Processing
-
-| Component | Have? | Where | Quality | Needed |
-|---|---|---|---|---|
-| **Schema inference** | YES | `pkg/ingest/schema/inference.go` | Has caching | Keep |
-| **Schema evolution** | YES | `pkg/ingest/schema/evolution.go` | Change detection | Keep, add Iceberg evolution |
-| **Schema policy** | YES | `pkg/ingest/schema/policy.go` + `pkg/schema/policy.go` | Duplicate | **MERGE** |
-| **Transform system** | PARTIAL | `pkg/transform/` | 2 files | **BUILD** full transform pipeline |
-| **Processor interface** | YES | `pkg/pipeline/interfaces.go` | Event-based | **REWRITE** for Arrow RecordBatch |
-| **Process mining transforms** | YES | `pkg/ocel/`, `pkg/pmpt/` | Domain-specific | **MOVE** to plugin |
-| **Quality/validation** | YES | 4 locations (see duplicates) | Scattered | **CONSOLIDATE** to one package |
-| **Format detection** | YES | `pkg/ingest/detect/` + `pkg/ingest/detect.go` | 793 lines, thorough | Keep |
-| **Heuristics engine** | YES | `pkg/ingest/heuristics/` | Good | Keep |
-| **Parser healing** | YES | `pkg/parser/healing/` | 3 files, ~1500 lines | Keep as optional transform |
-
-### Layer 4 — Reliability
-
-| Component | Have? | Where | Quality | Needed |
-|---|---|---|---|---|
-| **Checkpointing** | YES | `pkg/pipeline/checkpoint.go` | Job-level, file-based | Needs offset-level tracking |
-| **Checkpoint backends** | YES | `pkg/checkpoint/` | Local, Redis, S3 | Good coverage |
-| **DLQ** | YES | `pkg/pipeline/dlq.go` | JSON file output | Needs Parquet DLQ output |
-| **Quarantine** | YES | `pkg/ingest/errors/quarantine.go` | Basic | Merge with DLQ |
-| **Error policy** | YES | `pkg/ingest/errors/policy.go` + `pkg/ingest/core/decoder.go` | Duplicate | **MERGE** |
-| **Deduplication** | YES | `pkg/pipeline/dedup.go` | 413 lines | Port to Arrow-native |
-| **Retry logic** | NO | — | — | **BUILD** (exponential backoff) |
-| **Idempotent writes** | NO | — | — | **BUILD** (Iceberg snapshot dedup) |
-
-### Layer 5 — Orchestration
-
-| Component | Have? | Where | Quality | Needed |
-|---|---|---|---|---|
-| **Unified orchestrator** | NO | Two competing systems | — | **BUILD** — single engine over Arrow |
-| **Lifecycle management** | PARTIAL | `pkg/lifecycle/` | 1 file | **BUILD** full state machine |
-| **YAML config** | PARTIAL | `pkg/config/` + `pkg/ingest/unified_config.go` | Exists | **CONSOLIDATE** and extend |
-| **CLI** | YES | `cmd/logflow/main.go` | Cobra, works | **SIMPLIFY** — too many flags |
-| **Web UI** | YES | `cmd/logflow/serve.go` + web/ | Embedded HTML + SSE | Keep, rewire to unified engine |
-| **REST API** | PARTIAL | `pkg/api/rest/` | Handlers exist | **REWIRE** to unified engine |
-| **Prometheus metrics** | PARTIAL | `pkg/defaults/metrics/` + `pkg/ingest/telemetry/` | Exists | **CONSOLIDATE** |
-| **OTEL tracing** | YES | `pkg/telemetry/otel.go` | 404 lines | Keep |
-| **Health endpoint** | NO | — | — | **BUILD** |
-| **Graceful shutdown** | PARTIAL | CLI has signal handling | — | **BUILD** full drain logic |
-| **Hot reload** | NO | — | — | Future (not needed now) |
-
-### Cross-Cutting
-
-| Component | Have? | Where | Quality | Needed |
-|---|---|---|---|---|
-| **Data contracts** | YES | `pkg/contract/` | Nice feature | Keep |
-| **Diff engine** | YES | `pkg/diff/` | 459 lines | Keep |
-| **File watching** | YES | `pkg/watch/` | 1 file | Keep |
-| **State store** | YES | `pkg/state/` | 515 lines | Keep |
-| **Profiler** | YES | `pkg/perf/` | 490 lines | Keep |
-| **Test generators** | YES | `pkg/testing/` | Roundtrip + generators | Keep |
-| **Compaction** | YES | `pkg/compaction/` + `pkg/storage/maintenance/` | Duplicate | **MERGE** |
-| **S3 storage** | YES | `pkg/storage/s3/` | ~1100 lines | Keep |
-| **Catalog (file-based)** | YES | `pkg/storage/catalog/` | Basic | Needs REST catalog for Iceberg |
-| **Process mining plugin** | YES | `pkg/plugins/processmining/` | OK | Keep as plugin |
-
----
-
-## Summary Scoreboard
-
-| Category | Have | Partial | Missing | Duplicate/Broken |
-|---|---|---|---|---|
-| **Core interfaces** | 3 | 0 | 0 | 2 (competing sets) |
-| **Decoders** | 5 | 0 | 3 (Avro, Protobuf, Excel) | 0 |
-| **Sources** | 5 | 1 (S3) | 4 (Kafka, CDC, MQTT, Webhook) | 0 |
-| **Sinks** | 3 | 1 (Iceberg) | 0 | 1 (duplicate Iceberg) |
-| **Schema** | 2 | 0 | 0 | 2 (duplicate packages) |
-| **Quality** | 4 | 0 | 0 | 3 (4 locations!) |
-| **Flow control** | 3 | 0 | 0 | 1 (duplicate rate limiter) |
-| **Reliability** | 3 | 2 | 2 (retry, idempotent) | 2 (duplicate errors/quarantine) |
-| **Orchestration** | 0 | 3 (CLI, API, web) | 1 (unified engine) | 2 (competing pipelines) |
-| **Observability** | 2 | 1 (metrics) | 1 (health) | 1 (duplicate metrics) |
-
-**Totals:**
-- **Solid and working:** ~30 components
-- **Partial / needs improvement:** ~8 components
-- **Missing (must build):** ~11 components
-- **Duplicate / must merge:** ~14 instances across 7 concerns
-
----
-
-## The Path Forward (High-Level)
-
-### Step 1: Unify the Core (fix the root problem)
-Merge the two pipeline architectures into one. Keep:
-- **Arrow-native data model** from `pkg/ingest/core/`
-- **Channel pipeline orchestration** from `pkg/pipeline/orchestrator_v2.go`
-- **Result:** One `Source → Decoder → chan arrow.Record → Transform → Sink` pipeline
-
-### Step 2: Consolidate Duplicates
-Merge the 7 duplicated concerns (schema, quality, errors, checkpoints, heuristics, hooks, flow control) into single packages. Delete `pkg/ingest_backup/`.
-
-### Step 3: Decouple Process Mining
-Move process-mining-specific code (OCEL, PMPT, XES decoder, CaseID/Activity/Timestamp config) into `plugin/processmining/`. The core library should be domain-agnostic.
-
-### Step 4: Rewire All Entry Points
-CLI, Web UI, and REST API all call the same unified pipeline engine. No more separate code paths.
-
-### Step 5: Build Missing Sources & Decoders
-Avro, Protobuf → P0. Kafka, Postgres CDC, MySQL CDC → P1.
-
-### Step 6: Harden the Iceberg Writer
-Replace the minimal Iceberg sink with real catalog integration using `apache/iceberg-go`. Add compaction, snapshot management, partition evolution.
-
-### Step 7: Clean Up
-- Move root-level test files into proper `_test.go` files
-- Delete orphaned/backup directories
-- Consolidate single-file packages where they belong
-
----
-
-## Target Package Structure (After Cleanup)
+## Summary
 
 ```
-logpro/
-├── cmd/logpro/                  # Single CLI binary
-│   └── main.go                  # Cobra: ingest, serve, info, schema
-├── internal/
-│   └── engine/                  # Unified pipeline engine (not exported)
-├── pkg/
-│   ├── arrow/                   # Arrow helpers, batch utilities
-│   ├── config/                  # YAML config (one package)
-│   ├── checkpoint/              # Checkpoint store + backends
-│   ├── decode/                  # All decoders (CSV, JSON, Avro, Protobuf, Parquet)
-│   ├── detect/                  # Format detection + heuristics
-│   ├── dlq/                     # Dead letter queue
-│   ├── errors/                  # Error types (one package)
-│   ├── flow/                    # Backpressure, rate limiting, concurrency
-│   ├── observe/                 # Metrics, tracing, logging (one package)
-│   ├── quality/                 # Validation + quality (one package)
-│   ├── schema/                  # Inference + evolution + policy (one package)
-│   ├── sink/                    # Parquet, Iceberg, Arrow IPC sinks
-│   ├── source/                  # File, S3, HTTP, Kafka, CDC, MQTT sources
-│   ├── storage/                 # S3, catalog, object store
-│   ├── transform/               # Transform pipeline
-│   └── writer/                  # Parquet file writer internals
-├── plugin/
-│   └── processmining/           # OCEL, PMPT, XES decoder, column mapping
-├── server/                      # Web UI + REST API
-└── research/                    # This document
+Total Go code in pkg/:               ~48,000 lines
+  ├── Reachable from binary:          ~27,600 lines (58%)  ← LIVE
+  ├── Test/library-only:               ~1,900 lines (4%)   ← LEGITIMATE
+  ├── Dead — valuable, needs wiring:   ~7,600 lines (16%)  ← WIRE IN
+  ├── Dead — process mining (plugin):  ~3,300 lines (7%)   ← MOVE TO PLUGIN
+  └── Dead — delete:                   ~7,400 lines (15%)  ← DELETE
+
+Root test harnesses:                    4,578 lines         ← CONVERT TO go test
 ```
 
-38 packages → ~18 packages. Each package has one clear responsibility.
+### Quick Win: Delete ~7,400 lines of truly orphaned code
+These 12 packages can be removed immediately with zero impact:
+```
+pkg/quality, pkg/validation, pkg/validation/quality,
+pkg/heuristic, pkg/hooks, pkg/turbo, pkg/runtime,
+pkg/index, pkg/perf, pkg/query/cache, pkg/testing/roundtrip,
+pkg/storage (root cloud.go only — keep sub-packages)
+```
+
+### Medium Win: Wire in ~7,600 lines of already-built code
+These packages implement what the pipeline design calls for — they just need to be imported and connected.
+
+### Domain Win: Move ~3,300 lines to plugin
+OCEL model and parser healing are process-mining-specific. Move to `plugin/processmining/`.
