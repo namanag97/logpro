@@ -470,6 +470,25 @@ func humanSize(bytes int64) string {
 	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
 }
 
+// buildColumnMapping constructs a ColumnMapping from CLI flags.
+// Only includes roles that were explicitly set (non-empty).
+func buildColumnMapping() map[string]string {
+	m := make(map[string]string)
+	if csvCaseIDColumn != "" {
+		m["case_id"] = csvCaseIDColumn
+	}
+	if csvActivityColumn != "" {
+		m["activity"] = csvActivityColumn
+	}
+	if csvTimestampColumn != "" {
+		m["timestamp"] = csvTimestampColumn
+	}
+	if csvResourceColumn != "" {
+		m["resource"] = csvResourceColumn
+	}
+	return m
+}
+
 // mustCreateFile creates a file and panics on error.
 func mustCreateFile(path string) *os.File {
 	f, err := os.Create(path)
