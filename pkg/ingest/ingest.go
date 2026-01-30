@@ -3,8 +3,12 @@ package ingest
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
+	"strings"
 	"time"
+
+	"github.com/logflow/logflow/pkg/ingest/sources"
 )
 
 // Result contains the outcome of an ingestion operation.
