@@ -76,6 +76,7 @@ func init() {
 	ingestCmd.Flags().BoolVar(&ingestProfile, "profile", false, "Generate data profile")
 	ingestCmd.Flags().IntVar(&ingestWorkers, "workers", 0, "Number of workers (0=auto)")
 	ingestCmd.Flags().IntVar(&ingestMaxErrors, "max-errors", 1000, "Max errors before abort (0=unlimited)")
+	ingestCmd.Flags().StringVar(&ingestSource, "source", "", "Source URI (file://, http://, https://)")
 
 	rootCmd.AddCommand(ingestCmd)
 }
