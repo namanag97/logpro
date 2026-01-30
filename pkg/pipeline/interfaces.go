@@ -137,11 +137,16 @@ type Config struct {
 	SinkPath    string
 	Compression string
 
-	// Column mapping
+	// Column mapping — process-mining specific (kept for backward compatibility)
 	CaseIDColumn    string
 	ActivityColumn  string
 	TimestampColumn string
 	ResourceColumn  string
+
+	// ColumnMapping is a generic mapping from logical role to physical column name.
+	// Process-mining columns (case_id, activity, timestamp, resource) are
+	// populated by the fields above; additional columns can be added freely.
+	ColumnMapping map[string]string
 
 	// Processing options
 	BufferSize int
