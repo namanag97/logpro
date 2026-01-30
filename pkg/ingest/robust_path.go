@@ -23,6 +23,8 @@ import (
 	"github.com/apache/arrow/go/v14/parquet"
 	"github.com/apache/arrow/go/v14/parquet/compress"
 	"github.com/apache/arrow/go/v14/parquet/pqarrow"
+
+	ingerrors "github.com/logflow/logflow/pkg/ingest/errors"
 )
 
 // bytesToString converts a byte slice to a string without copying.
