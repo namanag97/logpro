@@ -969,6 +969,14 @@ func TestFullPipelineIntegration(t *testing.T) {
 				opts := DefaultOptions()
 				opts.OutputPath = outputPath
 
+				// Force RobustGo for formats that require DuckDB extensions
+				// not available in all builds (JSON extension for read_json_auto,
+				// and gzip CSV where the detector can't analyze compressed bytes).
+				switch spec.key {
+				case "json", "jsonl", "jsonl_gz":
+					opts.ForceStrategy = StrategyRobustGo
+				}
+
 				// Capture performance baseline
 				before := captureMemStats()
 				start := time.Now()
