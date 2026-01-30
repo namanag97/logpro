@@ -132,6 +132,21 @@ func runIngest(cmd *cobra.Command, args []string) error {
 	opts.EnableChecksum = ingestChecksum
 	opts.Workers = ingestWorkers
 	opts.MaxErrors = ingestMaxErrors
+	opts.QuarantinePath = ingestQuarantine
+
+	// Parse error policy
+	switch ingestErrorPolicy {
+	case "strict":
+		opts.ErrorPolicy = ingerrors.PolicyStrict
+	case "skip", "":
+		opts.ErrorPolicy = ingerrors.PolicySkip
+	case "quarantine":
+		opts.ErrorPolicy = ingerrors.PolicyQuarantine
+	case "recover":
+		opts.ErrorPolicy = ingerrors.PolicyRecover
+	default:
+		return fmt.Errorf("unknown error policy: %s (valid: strict, skip, quarantine, recover)", ingestErrorPolicy)
+	}
 
 	// Parse strategy
 	if ingestStrategy != "" {
