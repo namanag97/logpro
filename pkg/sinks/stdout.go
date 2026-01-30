@@ -7,12 +7,7 @@ import (
 	"os"
 
 	"github.com/logflow/logflow/pkg/pipeline"
-	"github.com/logflow/logflow/pkg/registry"
 )
-
-func init() {
-	registry.RegisterSink("stdout", StdoutSinkFactory)
-}
 
 // StdoutSink writes events to standard output for debugging/piping.
 type StdoutSink struct {
