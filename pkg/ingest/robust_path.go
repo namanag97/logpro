@@ -365,27 +365,34 @@ func (r *RobustPath) parseCSVLine(line []byte, delim, quote byte) [][]byte {
 	return out
 }
 
-// parseCSVLineRobust parses with error recovery.
+// parseCSVLineRobust parses with error recovery (allocating version).
 func (r *RobustPath) parseCSVLineRobust(line []byte, delim, quote byte, expectedCols int) ([][]byte, error, bool) {
 	fields := r.parseCSVLine(line, delim, quote)
+	return r.robustFixup(fields, expectedCols)
+}
+
+// parseCSVLineRobustBuf parses with error recovery using a reusable buffer.
+func (r *RobustPath) parseCSVLineRobustBuf(buf *csvFieldsBuf, line []byte, delim, quote byte, expectedCols int) ([][]byte, error, bool) {
+	fields := r.parseCSVLineInto(buf, line, delim, quote)
+	return r.robustFixup(fields, expectedCols)
+}
+
+// robustFixup applies ragged-row padding/truncation and UTF-8 validation.
+func (r *RobustPath) robustFixup(fields [][]byte, expectedCols int) ([][]byte, error, bool) {
 	recovered := false
 
 	// Handle ragged rows
 	if len(fields) < expectedCols {
-		// Pad with empty fields
 		for len(fields) < expectedCols {
 			fields = append(fields, nil)
 		}
 		recovered = true
 	} else if len(fields) > expectedCols {
-		// Truncate (but keep note)
 		fields = fields[:expectedCols]
 		recovered = true
 	}
 
 	// Only validate UTF-8 on fields that contain bytes >= 0x80.
-	// Pure ASCII fields (all bytes < 128) are always valid UTF-8 and
-	// don't need the expensive utf8.Valid + ToValidUTF8 call.
 	for i, f := range fields {
 		if len(f) == 0 {
 			continue
