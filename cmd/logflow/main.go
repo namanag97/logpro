@@ -227,8 +227,8 @@ func runConvert(cmd *cobra.Command, args []string) error {
 
 	startTime := time.Now()
 
-	// Use DuckDB pipeline for CSV when --duckdb flag is set, or always for maximum performance
-	if useDuckDB || (format == parser.FormatCSV && !isStdin) {
+	// Use DuckDB pipeline when --duckdb flag is explicitly set
+	if useDuckDB {
 		result, err = runDuckDBConvert(ctx, format, metadata)
 	} else {
 		result, err = runArrowConvert(ctx, format, metadata)
