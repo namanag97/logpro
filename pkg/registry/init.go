@@ -4,6 +4,7 @@ import (
 	"github.com/logflow/logflow/pkg/adapters"
 	"github.com/logflow/logflow/pkg/pipeline"
 	"github.com/logflow/logflow/pkg/processors"
+	"github.com/logflow/logflow/pkg/sinks"
 )
 
 func init() {
@@ -13,9 +14,13 @@ func init() {
 	}, "csv", "txt", "tsv")
 
 	// Register Sinks
-	RegisterSink("parquet", func(cfg pipeline.Config) (pipeline.Sink, error) {
+	RegisterSink("parquet-adapter", func(cfg pipeline.Config) (pipeline.Sink, error) {
 		return adapters.NewParquetSink(cfg)
 	})
+	RegisterSink("iceberg", sinks.IcebergSinkFactory)
+	RegisterSink("parquet", sinks.ParquetSinkFactory)
+	RegisterSink("jsonl", sinks.JSONLSinkFactory)
+	RegisterSink("stdout", sinks.StdoutSinkFactory)
 
 	// Register Processors
 	RegisterProcessor("filter", processors.FilterProcessorFactory)
