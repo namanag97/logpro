@@ -129,12 +129,12 @@ func (s *CSVSource) Read(ctx context.Context, r io.Reader, out chan<- *pipeline.
 		s.currentRow++
 		s.byteOffset += int64(len(line))
 
-		line = trimLineEnding(line)
+		line = parser.TrimLineEnding(line)
 		if len(line) == 0 {
 			continue
 		}
 
-		fields := s.parseLine(line)
+		fields := s.scanner.ScanLine(line)
 
 		// Check for ragged rows
 		if len(fields) != expectedCols {
