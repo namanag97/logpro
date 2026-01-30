@@ -94,7 +94,7 @@ func (s *CSVSource) Read(ctx context.Context, r io.Reader, out chan<- *pipeline.
 	}
 	s.byteOffset += int64(len(headerLine))
 
-	columns := s.parseLine(trimLineEnding(headerLine))
+	columns := s.scanner.ScanLine(parser.TrimLineEnding(headerLine))
 	s.resolveColumnIndices(columns)
 
 	// Validate PM columns only when they are configured
