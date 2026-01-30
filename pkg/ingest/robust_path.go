@@ -216,8 +216,13 @@ defer writer.Close()
 
 		if parseErr != nil && !recovered {
 			errorCount++
-			if opts.MaxErrors > 0 && errorCount >= int64(opts.MaxErrors) {
-				return nil, fmt.Errorf("too many errors (%d), aborting", errorCount)
+			// Route through error handler
+			rowErr := ingerrors.RowError{
+				RowNumber: lineNum,
+				Error:     parseErr,
+			}
+			if handlerErr := errHandler.Handle(rowErr); handlerErr != nil {
+				return nil, handlerErr
 			}
 			continue
 		}
