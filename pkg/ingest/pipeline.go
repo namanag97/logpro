@@ -31,6 +31,9 @@ type Pipeline struct {
 	// Configuration
 	config *UnifiedConfig
 
+	// Plugin system
+	plugins *core.PluginRegistry
+
 	// Runtime state
 	mu        sync.RWMutex
 	running   atomic.Bool
