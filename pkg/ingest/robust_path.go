@@ -668,7 +668,11 @@ var nullValues = [][]byte{
 
 // isNullValue checks if value represents null without allocating a string.
 func (r *RobustPath) isNullValue(value []byte) bool {
-	v := bytes.TrimSpace(value)
+	return r.isNullValueTrimmed(bytes.TrimSpace(value))
+}
+
+// isNullValueTrimmed checks if an already-trimmed value represents null.
+func (r *RobustPath) isNullValueTrimmed(v []byte) bool {
 	if len(v) == 0 {
 		return true
 	}
