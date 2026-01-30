@@ -203,7 +203,7 @@ func TestCSVParserCustomDelimiter(t *testing.T) {
 func TestCSVParserQuotedFields(t *testing.T) {
 	input := "case_id,activity,timestamp,resource\n\"case,1\",\"Activity \"\"A\"\"\",2024-01-01T10:00:00Z,Alice\n"
 
-	p := NewCSVParser(DefaultConfig())
+	p := NewCSVParser(csvConfig())
 	out := make(chan *model.Event, 100)
 
 	go func() {
