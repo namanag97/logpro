@@ -154,6 +154,11 @@ defer writer.Close()
 		tsFormatIdx[i] = -1
 	}
 
+	// Reusable CSV field buffer — avoids per-row allocation
+	var csvBuf csvFieldsBuf
+	csvBuf.fields = make([][]byte, 0, len(headers)+4)
+	csvBuf.tmp = make([]byte, 0, 1024)
+
 	var rowCount int64
 	var errorCount int64
 	var recoveredCount int64
@@ -176,8 +181,8 @@ defer writer.Close()
 
 		lineNum++
 
-		// Parse with error recovery
-		fields, parseErr, recovered := r.parseCSVLineRobust(line, analysis.Delimiter, analysis.QuoteChar, len(headers))
+		// Parse with error recovery using reusable buffer
+		fields, parseErr, recovered := r.parseCSVLineRobustBuf(&csvBuf, line, analysis.Delimiter, analysis.QuoteChar, len(headers))
 
 		if parseErr != nil && !recovered {
 			errorCount++
