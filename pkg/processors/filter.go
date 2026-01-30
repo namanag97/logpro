@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"regexp"
+	"sync"
 
 	"github.com/logflow/logflow/pkg/pipeline"
 	"github.com/logflow/logflow/pkg/registry"
@@ -12,7 +13,90 @@ import (
 
 func init() {
 	registry.RegisterProcessor("filter", FilterProcessorFactory)
+
+	// Register built-in filter operators.
+	registerBuiltinFilterOps()
 }
+
+// --- Filter Operator Registry ---
+
+// FilterOp defines a function that compares a field value against a rule value.
+type FilterOp func(fieldValue, ruleValue []byte) bool
+
+var (
+	operatorMu       sync.RWMutex
+	operatorRegistry = make(map[string]FilterOp)
+)
+
+// registerBuiltinFilterOps populates the operator registry with default operators.
+func registerBuiltinFilterOps() {
+	builtins := map[string]FilterOp{
+		"eq": func(fieldValue, ruleValue []byte) bool {
+			return bytes.Equal(fieldValue, ruleValue)
+		},
+		"ne": func(fieldValue, ruleValue []byte) bool {
+			return !bytes.Equal(fieldValue, ruleValue)
+		},
+		"contains": func(fieldValue, ruleValue []byte) bool {
+			return bytes.Contains(fieldValue, ruleValue)
+		},
+		"prefix": func(fieldValue, ruleValue []byte) bool {
+			return bytes.HasPrefix(fieldValue, ruleValue)
+		},
+		"suffix": func(fieldValue, ruleValue []byte) bool {
+			return bytes.HasSuffix(fieldValue, ruleValue)
+		},
+		"regex": func(fieldValue, ruleValue []byte) bool {
+			re, err := regexp.Compile(string(ruleValue))
+			if err != nil {
+				return false
+			}
+			return re.Match(fieldValue)
+		},
+		"empty": func(fieldValue, _ []byte) bool {
+			return len(fieldValue) == 0
+		},
+		"notempty": func(fieldValue, _ []byte) bool {
+			return len(fieldValue) > 0
+		},
+		"gt": func(fieldValue, ruleValue []byte) bool {
+			return bytes.Compare(fieldValue, ruleValue) > 0
+		},
+		"lt": func(fieldValue, ruleValue []byte) bool {
+			return bytes.Compare(fieldValue, ruleValue) < 0
+		},
+		"starts_with": func(fieldValue, ruleValue []byte) bool {
+			return bytes.HasPrefix(fieldValue, ruleValue)
+		},
+		"ends_with": func(fieldValue, ruleValue []byte) bool {
+			return bytes.HasSuffix(fieldValue, ruleValue)
+		},
+	}
+
+	operatorMu.Lock()
+	defer operatorMu.Unlock()
+	for name, op := range builtins {
+		operatorRegistry[name] = op
+	}
+}
+
+// RegisterFilterOp registers a custom filter operator by name.
+// If an operator with the same name already exists it is replaced.
+func RegisterFilterOp(name string, op FilterOp) {
+	operatorMu.Lock()
+	defer operatorMu.Unlock()
+	operatorRegistry[name] = op
+}
+
+// GetFilterOp retrieves a registered filter operator by name.
+func GetFilterOp(name string) (FilterOp, bool) {
+	operatorMu.RLock()
+	defer operatorMu.RUnlock()
+	op, ok := operatorRegistry[name]
+	return op, ok
+}
+
+// --- FilterProcessor ---
 
 // FilterProcessor drops events based on rules.
 type FilterProcessor struct {
@@ -109,7 +193,27 @@ func (p *FilterProcessor) matchesRule(event *pipeline.Event, rule FilterRule) bo
 }
 
 // compareValue applies the operator to compare values.
+// It first looks up the operator in the registry; if not found it falls back
+// to the built-in switch for backward compatibility (particularly for "regex"
+// which benefits from the pre-compiled Regex in FilterRule).
 func (p *FilterProcessor) compareValue(value []byte, rule FilterRule) bool {
+	// Special case: "regex" uses the pre-compiled regexp from FilterRule.
+	if rule.Operator == "regex" {
+		if rule.Regex != nil {
+			return rule.Regex.Match(value)
+		}
+		return false
+	}
+
+	// Look up from the operator registry first.
+	operatorMu.RLock()
+	op, ok := operatorRegistry[rule.Operator]
+	operatorMu.RUnlock()
+	if ok {
+		return op(value, rule.Value)
+	}
+
+	// Fallback: built-in switch for any unregistered operators.
 	switch rule.Operator {
 	case "eq":
 		return bytes.Equal(value, rule.Value)
@@ -121,11 +225,6 @@ func (p *FilterProcessor) compareValue(value []byte, rule FilterRule) bool {
 		return bytes.HasPrefix(value, rule.Value)
 	case "suffix":
 		return bytes.HasSuffix(value, rule.Value)
-	case "regex":
-		if rule.Regex != nil {
-			return rule.Regex.Match(value)
-		}
-		return false
 	case "empty":
 		return len(value) == 0
 	case "notempty":
