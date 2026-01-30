@@ -1063,10 +1063,7 @@ func runWatch(cmd *cobra.Command, args []string) error {
 		// Run conversion
 		ctx := context.Background()
 		parserCfg := parser.DefaultConfig()
-		parserCfg.CaseIDColumn = csvCaseIDColumn
-		parserCfg.ActivityColumn = csvActivityColumn
-		parserCfg.TimestampColumn = csvTimestampColumn
-		parserCfg.ResourceColumn = csvResourceColumn
+		parserCfg.ColumnMapping = buildColumnMapping()
 
 		writerCfg := writer.Config{
 			BatchSize:   1024,
