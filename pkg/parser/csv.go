@@ -93,7 +93,7 @@ func (p *CSVParser) Parse(ctx context.Context, r io.Reader, out chan<- *model.Ev
 		lineNum++
 
 		// Trim trailing newline/carriage return
-		line = trimLineEnding(line)
+		line = TrimLineEnding(line)
 		if len(line) == 0 {
 			continue
 		}
@@ -173,7 +173,7 @@ func (p *CSVParser) Parse(ctx context.Context, r io.Reader, out chan<- *model.Ev
 
 // parseHeaderLine extracts column names from the header line.
 func (p *CSVParser) parseHeaderLine(line []byte) [][]byte {
-	line = trimLineEnding(line)
+	line = TrimLineEnding(line)
 	return p.parseCSVLine(line)
 }
 
