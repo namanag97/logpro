@@ -13,12 +13,7 @@ import (
 	"github.com/apache/arrow/go/v14/parquet/pqarrow"
 
 	"github.com/logflow/logflow/pkg/pipeline"
-	"github.com/logflow/logflow/pkg/registry"
 )
-
-func init() {
-	registry.RegisterSink("parquet", ParquetSinkFactory)
-}
 
 // ParquetSink writes events directly to a Parquet file.
 type ParquetSink struct {
