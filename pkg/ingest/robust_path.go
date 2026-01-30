@@ -730,10 +730,34 @@ func (r *RobustPath) parseTimestamp(s string) time.Time {
 	return time.Time{}
 }
 
+// couldBeTimestamp does a fast reject of values that clearly aren't timestamps.
+// This avoids calling time.Parse (which allocates on every failure) for values
+// like empty strings, plain words, or numbers that can't be dates.
+func couldBeTimestamp(s string) bool {
+	if len(s) < 8 || len(s) > 35 {
+		return false // Too short/long for any timestamp format
+	}
+	// Must start with a digit (all our formats do: YYYY-... or MM/... or DD-...)
+	if s[0] < '0' || s[0] > '9' {
+		return false
+	}
+	// Must contain at least one separator
+	for i := 1; i < len(s); i++ {
+		switch s[i] {
+		case '-', '/', 'T', ' ', ':':
+			return true
+		}
+	}
+	return false
+}
+
 // parseTimestampCached tries the cached format index first, falling back to
 // a full scan. Returns the parsed time and the index of the successful format.
 // hint == -1 means no cached format yet.
 func (r *RobustPath) parseTimestampCached(s string, hint int) (time.Time, int) {
+	if !couldBeTimestamp(s) {
+		return time.Time{}, -1
+	}
 	// Try the cached format first
 	if hint >= 0 && hint < len(timestampLayouts) {
 		if t, err := time.Parse(timestampLayouts[hint], s); err == nil {
