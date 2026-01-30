@@ -189,20 +189,26 @@ func (p *Pipeline) Process(ctx context.Context, inputPath string, opts Options) 
 	var result *Result
 	parseStart := time.Now()
 
-	switch heur.Strategy {
-	case StrategyFastDuckDB:
-		result, err = p.fastPath.Process(ctx, inputPath, outputPath, analysis, opts)
-	case StrategyRobustGo:
-		result, err = p.robustPath.Process(ctx, inputPath, outputPath, analysis, opts)
-	case StrategyStreaming:
-		result, err = p.robustPath.Process(ctx, inputPath, outputPath, analysis, opts)
-	case StrategyHybrid:
-		result, err = p.fastPath.Process(ctx, inputPath, outputPath, analysis, opts)
-		if err != nil {
+	// Try pluggable strategies first
+	if s := SelectStrategy(analysis, heur); s != nil {
+		result, err = s.Process(ctx, inputPath, outputPath, analysis, opts)
+	} else {
+		// Fallback to built-in routing
+		switch heur.Strategy {
+		case StrategyFastDuckDB:
+			result, err = p.fastPath.Process(ctx, inputPath, outputPath, analysis, opts)
+		case StrategyRobustGo:
 			result, err = p.robustPath.Process(ctx, inputPath, outputPath, analysis, opts)
+		case StrategyStreaming:
+			result, err = p.robustPath.Process(ctx, inputPath, outputPath, analysis, opts)
+		case StrategyHybrid:
+			result, err = p.fastPath.Process(ctx, inputPath, outputPath, analysis, opts)
+			if err != nil {
+				result, err = p.robustPath.Process(ctx, inputPath, outputPath, analysis, opts)
+			}
+		default:
+			result, err = p.fastPath.Process(ctx, inputPath, outputPath, analysis, opts)
 		}
-	default:
-		result, err = p.fastPath.Process(ctx, inputPath, outputPath, analysis, opts)
 	}
 
 	parseTime := time.Since(parseStart)
