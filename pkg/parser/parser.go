@@ -86,22 +86,51 @@ type Config struct {
 	BufferSize int
 
 	// CaseIDColumn is the name/index of the case ID column (CSV).
+	// Deprecated: Use ColumnMapping["case_id"] via Column().
 	CaseIDColumn string
 
 	// ActivityColumn is the name/index of the activity column (CSV).
+	// Deprecated: Use ColumnMapping["activity"] via Column().
 	ActivityColumn string
 
 	// TimestampColumn is the name/index of the timestamp column (CSV).
+	// Deprecated: Use ColumnMapping["timestamp"] via Column().
 	TimestampColumn string
 
 	// ResourceColumn is the name/index of the resource column (CSV).
+	// Deprecated: Use ColumnMapping["resource"] via Column().
 	ResourceColumn string
+
+	// ColumnMapping maps logical role names to physical column names.
+	// Standard roles: "case_id", "activity", "timestamp", "resource".
+	ColumnMapping map[string]string
 
 	// TimestampFormat is the expected timestamp format (Go time layout).
 	TimestampFormat string
 
 	// Delimiter is the field delimiter for CSV (default: comma).
 	Delimiter byte
+}
+
+// Column returns the physical column name for a logical role.
+// It checks ColumnMapping first, then falls back to the legacy fields.
+func (c Config) Column(role string) string {
+	if c.ColumnMapping != nil {
+		if v, ok := c.ColumnMapping[role]; ok && v != "" {
+			return v
+		}
+	}
+	switch role {
+	case "case_id":
+		return c.CaseIDColumn
+	case "activity":
+		return c.ActivityColumn
+	case "timestamp":
+		return c.TimestampColumn
+	case "resource":
+		return c.ResourceColumn
+	}
+	return ""
 }
 
 // DefaultConfig returns a Config with sensible defaults.
@@ -113,6 +142,12 @@ func DefaultConfig() Config {
 		ActivityColumn:  "concept:name",
 		TimestampColumn: "time:timestamp",
 		ResourceColumn:  "org:resource",
+		ColumnMapping: map[string]string{
+			"case_id":   "case:concept:name",
+			"activity":  "concept:name",
+			"timestamp": "time:timestamp",
+			"resource":  "org:resource",
+		},
 		TimestampFormat: "2006-01-02T15:04:05.000Z07:00",
 		Delimiter:       ',',
 	}
