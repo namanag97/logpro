@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	ingerrors "github.com/logflow/logflow/pkg/ingest/errors"
 	"github.com/logflow/logflow/pkg/ingest/sources"
 )
 
