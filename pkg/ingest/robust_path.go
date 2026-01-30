@@ -293,32 +293,43 @@ return fields
 
 // parseCSVLineRobust parses with error recovery.
 func (r *RobustPath) parseCSVLineRobust(line []byte, delim, quote byte, expectedCols int) ([][]byte, error, bool) {
-fields := r.parseCSVLine(line, delim, quote)
-recovered := false
+	fields := r.parseCSVLine(line, delim, quote)
+	recovered := false
 
-// Handle ragged rows
-if len(fields) < expectedCols {
-// Pad with empty fields
-for len(fields) < expectedCols {
-fields = append(fields, nil)
-}
-recovered = true
-} else if len(fields) > expectedCols {
-// Truncate (but keep note)
-fields = fields[:expectedCols]
-recovered = true
-}
+	// Handle ragged rows
+	if len(fields) < expectedCols {
+		// Pad with empty fields
+		for len(fields) < expectedCols {
+			fields = append(fields, nil)
+		}
+		recovered = true
+	} else if len(fields) > expectedCols {
+		// Truncate (but keep note)
+		fields = fields[:expectedCols]
+		recovered = true
+	}
 
-// Check for encoding issues
-for i, f := range fields {
-if !utf8.Valid(f) {
-// Replace invalid UTF-8 with replacement character
-fields[i] = bytes.ToValidUTF8(f, []byte("\uFFFD"))
-recovered = true
-}
-}
+	// Only validate UTF-8 on fields that contain bytes >= 0x80.
+	// Pure ASCII fields (all bytes < 128) are always valid UTF-8 and
+	// don't need the expensive utf8.Valid + ToValidUTF8 call.
+	for i, f := range fields {
+		if len(f) == 0 {
+			continue
+		}
+		hasHigh := false
+		for _, b := range f {
+			if b >= 0x80 {
+				hasHigh = true
+				break
+			}
+		}
+		if hasHigh && !utf8.Valid(f) {
+			fields[i] = bytes.ToValidUTF8(f, []byte("\uFFFD"))
+			recovered = true
+		}
+	}
 
-return fields, nil, recovered
+	return fields, nil, recovered
 }
 
 // inferTypes samples rows to determine column types.
