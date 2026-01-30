@@ -265,14 +265,13 @@ func TestLocalBackendCRUD(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	cp := &Checkpoint{
-		ID:        "test-job",
-		InputPath: "in.csv",
-		Phase:     "reading",
-		BytesRead: 1024,
-	}
 
-	// Save
+	// Use Manager to create a checkpoint (sets the path correctly for Save)
+	mgr, _ := NewManager(dir)
+	cp := mgr.Create("test-job", "in.csv", "out.parquet")
+	cp.Update(1024, 100)
+
+	// Save via backend
 	if err := b.Save(ctx, cp); err != nil {
 		t.Fatalf("Save error: %v", err)
 	}
