@@ -241,12 +241,14 @@ func TestCSVParserColumnMapping(t *testing.T) {
 		"resource":  "Worker",
 	}
 	p := NewCSVParser(cfg)
-	out := make(chan *model.Event, 10)
+	out := make(chan *model.Event, 100)
 
-	err := p.Parse(context.Background(), strings.NewReader(input), out)
-	if err != nil {
-		t.Fatalf("Parse error: %v", err)
-	}
+	go func() {
+		defer close(out)
+		if err := p.Parse(context.Background(), strings.NewReader(input), out); err != nil {
+			t.Errorf("Parse error: %v", err)
+		}
+	}()
 
 	events := drainChannel(out)
 	if len(events) != 1 {
