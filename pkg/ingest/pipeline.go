@@ -405,6 +405,11 @@ func (p *Pipeline) IsRunning() bool {
 	return p.running.Load()
 }
 
+// AdvancedAnalyze uses the detect.Detector for richer analysis.
+func (p *Pipeline) AdvancedAnalyze(path string) (*detect.Analysis, error) {
+	return p.advDetector.AnalyzePath(path)
+}
+
 // SmallFileBatcher batches small files for efficient processing.
 type SmallFileBatcher struct {
 	threshold int64 // Size threshold for "small"
