@@ -82,11 +82,23 @@ func init() {
 }
 
 func runIngest(cmd *cobra.Command, args []string) error {
-	inputPath := args[0]
+	inputPath := ""
+	if len(args) > 0 {
+		inputPath = args[0]
+	}
+	if ingestSource != "" {
+		inputPath = ingestSource
+	}
+	if inputPath == "" {
+		return fmt.Errorf("provide an input file or --source URI")
+	}
 
-	// Check input exists
-	if _, err := os.Stat(inputPath); err != nil {
-		return fmt.Errorf("input file not found: %s", inputPath)
+	// For local files, check existence (skip for URLs)
+	if !strings.HasPrefix(inputPath, "http://") && !strings.HasPrefix(inputPath, "https://") {
+		cleanPath := strings.TrimPrefix(inputPath, "file://")
+		if _, err := os.Stat(cleanPath); err != nil {
+			return fmt.Errorf("input file not found: %s", cleanPath)
+		}
 	}
 
 	// Analyze only mode
