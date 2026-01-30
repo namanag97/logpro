@@ -8,12 +8,7 @@ import (
 
 	"github.com/logflow/logflow/internal/model"
 	"github.com/logflow/logflow/pkg/pipeline"
-	"github.com/logflow/logflow/pkg/registry"
 )
-
-func init() {
-	registry.RegisterProcessor("sample", SampleProcessorFactory)
-}
 
 // SampleProcessor implements various sampling strategies.
 type SampleProcessor struct {
