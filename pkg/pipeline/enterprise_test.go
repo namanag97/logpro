@@ -282,9 +282,9 @@ func TestDLQProcessorName(t *testing.T) {
 
 func TestCheckpointManager(t *testing.T) {
 	dir := t.TempDir()
-	cm := NewCheckpointManager(dir)
-	if cm == nil {
-		t.Fatal("NewCheckpointManager returned nil")
+	cm, err := NewCheckpointManager(dir)
+	if err != nil {
+		t.Fatalf("NewCheckpointManager error: %v", err)
 	}
 
 	cp := cm.Create("job1", "input.csv")
