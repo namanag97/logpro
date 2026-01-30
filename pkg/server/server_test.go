@@ -24,7 +24,7 @@ func TestServer_Health(t *testing.T) {
 	s := newTestServer(t)
 	defer s.Close()
 
-	req := httptest.NewRequest("GET", "/api/health", nil)
+	req := httptest.NewRequest("GET", "/health", nil)
 	w := httptest.NewRecorder()
 
 	s.ServeHTTP(w, req)
