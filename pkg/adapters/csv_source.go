@@ -94,11 +94,13 @@ func (s *CSVSource) Read(ctx context.Context, r io.Reader, out chan<- *pipeline.
 	columns := s.parseLine(trimLineEnding(headerLine))
 	s.resolveColumnIndices(columns)
 
-	// Validate required columns
-	if s.caseIdx < 0 || s.activityIdx < 0 || s.timestampIdx < 0 {
-		return &ColumnError{
-			Message: "missing required columns",
-			Missing: s.getMissingColumns(),
+	// Validate PM columns only when they are configured
+	if s.cfg.Column("case_id") != "" || s.cfg.Column("activity") != "" || s.cfg.Column("timestamp") != "" {
+		if missing := s.getMissingColumns(); len(missing) > 0 {
+			return &ColumnError{
+				Message: "missing mapped columns",
+				Missing: missing,
+			}
 		}
 	}
 
