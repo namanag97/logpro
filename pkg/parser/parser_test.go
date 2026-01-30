@@ -179,7 +179,7 @@ func TestCSVParserBasic(t *testing.T) {
 func TestCSVParserCustomDelimiter(t *testing.T) {
 	input := "case_id;activity;timestamp;resource\nc1;A;2024-01-01T10:00:00Z;Alice\n"
 
-	cfg := DefaultConfig()
+	cfg := csvConfig()
 	cfg.Delimiter = ';'
 	p := NewCSVParser(cfg)
 	out := make(chan *model.Event, 100)
