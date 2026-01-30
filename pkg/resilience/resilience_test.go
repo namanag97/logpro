@@ -278,7 +278,8 @@ func TestCheckpointShouldResume(t *testing.T) {
 
 func TestCheckpointGetResumePoint(t *testing.T) {
 	cp := NewCheckpoint("in.csv", "out.parquet", "hash")
-	cp.Update(2048, 200)
+	// Update(row, byteOffset)
+	cp.Update(200, 2048)
 	rp := cp.GetResumePoint()
 	if rp != 2048 {
 		t.Errorf("GetResumePoint = %d, want 2048", rp)
