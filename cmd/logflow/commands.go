@@ -259,10 +259,7 @@ func runInspect(cmd *cobra.Command, args []string) error {
 
 	// Create parser
 	parserCfg := parser.DefaultConfig()
-	parserCfg.CaseIDColumn = csvCaseIDColumn
-	parserCfg.ActivityColumn = csvActivityColumn
-	parserCfg.TimestampColumn = csvTimestampColumn
-	parserCfg.ResourceColumn = csvResourceColumn
+	parserCfg.ColumnMapping = buildColumnMapping()
 
 	inputParser, err := parser.NewParser(format, parserCfg)
 	if err != nil {
@@ -548,10 +545,7 @@ func runAnonymize(cmd *cobra.Command, args []string) error {
 
 	// Create parser
 	parserCfg := parser.DefaultConfig()
-	parserCfg.CaseIDColumn = csvCaseIDColumn
-	parserCfg.ActivityColumn = csvActivityColumn
-	parserCfg.TimestampColumn = csvTimestampColumn
-	parserCfg.ResourceColumn = csvResourceColumn
+	parserCfg.ColumnMapping = buildColumnMapping()
 
 	inputParser, err := parser.NewParser(format, parserCfg)
 	if err != nil {
@@ -690,10 +684,7 @@ func runDiff(cmd *cobra.Command, args []string) error {
 
 	// Create parsers
 	parserCfg := parser.DefaultConfig()
-	parserCfg.CaseIDColumn = csvCaseIDColumn
-	parserCfg.ActivityColumn = csvActivityColumn
-	parserCfg.TimestampColumn = csvTimestampColumn
-	parserCfg.ResourceColumn = csvResourceColumn
+	parserCfg.ColumnMapping = buildColumnMapping()
 
 	leftParser, err := parser.NewParser(leftFormat, parserCfg)
 	if err != nil {
@@ -1013,10 +1004,7 @@ func convertFile(ctx context.Context, inputPath, outputDir string) BatchResult {
 
 	// Create pipeline
 	parserCfg := parser.DefaultConfig()
-	parserCfg.CaseIDColumn = csvCaseIDColumn
-	parserCfg.ActivityColumn = csvActivityColumn
-	parserCfg.TimestampColumn = csvTimestampColumn
-	parserCfg.ResourceColumn = csvResourceColumn
+	parserCfg.ColumnMapping = buildColumnMapping()
 
 	writerCfg := writer.DefaultConfig()
 	writerCfg.Compression = writer.ParseCompression(compressionFlag)
