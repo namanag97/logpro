@@ -44,19 +44,34 @@ func (p *CSVParser) Parse(ctx context.Context, r io.Reader, out chan<- *model.Ev
 	columns := p.parseHeaderLine(headerLine)
 	colMap := p.buildColumnMap(columns)
 
-	caseIdx, ok := colMap[p.cfg.CaseIDColumn]
-	if !ok {
-		return ErrMissingColumn
+	// Resolve PM column indices (all optional — when unset, everything goes to Attributes)
+	caseIdx := -1
+	actIdx := -1
+	tsIdx := -1
+	resIdx := -1
+
+	if col := p.cfg.Column("case_id"); col != "" {
+		if idx, ok := colMap[col]; ok {
+			caseIdx = idx
+		}
 	}
-	actIdx, ok := colMap[p.cfg.ActivityColumn]
-	if !ok {
-		return ErrMissingColumn
+	if col := p.cfg.Column("activity"); col != "" {
+		if idx, ok := colMap[col]; ok {
+			actIdx = idx
+		}
 	}
-	tsIdx, ok := colMap[p.cfg.TimestampColumn]
-	if !ok {
-		return ErrMissingColumn
+	if col := p.cfg.Column("timestamp"); col != "" {
+		if idx, ok := colMap[col]; ok {
+			tsIdx = idx
+		}
 	}
-	resIdx := colMap[p.cfg.ResourceColumn] // Optional
+	if col := p.cfg.Column("resource"); col != "" {
+		if idx, ok := colMap[col]; ok {
+			resIdx = idx
+		}
+	}
+
+	pmMode := caseIdx >= 0 && actIdx >= 0 && tsIdx >= 0
 
 	// Parse data lines
 	lineNum := 1
@@ -87,42 +102,57 @@ func (p *CSVParser) Parse(ctx context.Context, r io.Reader, out chan<- *model.Ev
 
 		// Use FSM scanner for proper edge case handling
 		fields := p.scanner.ScanLine(line)
-		if len(fields) <= caseIdx || len(fields) <= actIdx || len(fields) <= tsIdx {
-			p.eventPool.Put(event)
-			continue
-		}
 
-		// Copy field values to event (avoids retaining references to line buffer)
-		event.CaseID = append(event.CaseID[:0], fields[caseIdx]...)
-		event.Activity = append(event.Activity[:0], fields[actIdx]...)
-
-		// Parse timestamp
-		ts, err := p.parseTimestamp(fields[tsIdx])
-		if err != nil {
-			p.eventPool.Put(event)
-			continue
-		}
-		event.Timestamp = ts
-
-		// Optional resource field
-		if resIdx >= 0 && resIdx < len(fields) {
-			event.Resource = append(event.Resource[:0], fields[resIdx]...)
-		}
-
-		// Add other columns as attributes
-		for i, col := range columns {
-			if i == caseIdx || i == actIdx || i == tsIdx || i == resIdx {
+		if pmMode {
+			// Process mining mode: map specific columns to Event fields
+			if len(fields) <= caseIdx || len(fields) <= actIdx || len(fields) <= tsIdx {
+				p.eventPool.Put(event)
 				continue
 			}
-			if i < len(fields) && len(fields[i]) > 0 {
-				attr := model.Attribute{
-					Key:   make([]byte, len(col)),
-					Value: make([]byte, len(fields[i])),
-					Type:  model.AttrTypeString,
+
+			event.CaseID = append(event.CaseID[:0], fields[caseIdx]...)
+			event.Activity = append(event.Activity[:0], fields[actIdx]...)
+
+			ts, tsErr := p.parseTimestamp(fields[tsIdx])
+			if tsErr != nil {
+				p.eventPool.Put(event)
+				continue
+			}
+			event.Timestamp = ts
+
+			if resIdx >= 0 && resIdx < len(fields) {
+				event.Resource = append(event.Resource[:0], fields[resIdx]...)
+			}
+
+			// Remaining columns go to Attributes
+			for i, col := range columns {
+				if i == caseIdx || i == actIdx || i == tsIdx || i == resIdx {
+					continue
 				}
-				copy(attr.Key, col)
-				copy(attr.Value, fields[i])
-				event.Attributes = append(event.Attributes, attr)
+				if i < len(fields) && len(fields[i]) > 0 {
+					attr := model.Attribute{
+						Key:   make([]byte, len(col)),
+						Value: make([]byte, len(fields[i])),
+						Type:  model.AttrTypeString,
+					}
+					copy(attr.Key, col)
+					copy(attr.Value, fields[i])
+					event.Attributes = append(event.Attributes, attr)
+				}
+			}
+		} else {
+			// Generic mode: ALL columns go to Attributes
+			for i, col := range columns {
+				if i < len(fields) && len(fields[i]) > 0 {
+					attr := model.Attribute{
+						Key:   make([]byte, len(col)),
+						Value: make([]byte, len(fields[i])),
+						Type:  model.AttrTypeString,
+					}
+					copy(attr.Key, col)
+					copy(attr.Value, fields[i])
+					event.Attributes = append(event.Attributes, attr)
+				}
 			}
 		}
 
