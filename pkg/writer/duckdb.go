@@ -225,45 +225,55 @@ func (r *DuckDBCSVReader) ConvertCSVToParquet(
 		compressionStr = "uncompressed"
 	}
 
-	// First, check which columns exist in the CSV
-	columns, err := r.GetSchemaInfo(inputPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read CSV schema: %w", err)
-	}
+	// Check if process mining columns are configured
+	hasPMColumns := caseIDCol != "" && activityCol != "" && timestampCol != ""
 
-	columnSet := make(map[string]bool)
-	for _, col := range columns {
-		columnSet[col.Name] = true
-	}
+	var query string
+	if hasPMColumns {
+		// Process mining mode: validate and reshape columns
+		columns, err := r.GetSchemaInfo(inputPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read CSV schema: %w", err)
+		}
 
-	// Validate required columns exist
-	if !columnSet[caseIDCol] {
-		return nil, fmt.Errorf("case_id column %q not found (available: %v)", caseIDCol, columnNames(columns))
-	}
-	if !columnSet[activityCol] {
-		return nil, fmt.Errorf("activity column %q not found (available: %v)", activityCol, columnNames(columns))
-	}
-	if !columnSet[timestampCol] {
-		return nil, fmt.Errorf("timestamp column %q not found (available: %v)", timestampCol, columnNames(columns))
-	}
+		columnSet := make(map[string]bool)
+		for _, col := range columns {
+			columnSet[col.Name] = true
+		}
 
-	// Build resource column expression (NULL if column doesn't exist)
-	resourceExpr := "NULL"
-	if columnSet[resourceCol] {
-		resourceExpr = fmt.Sprintf(`"%s"`, resourceCol)
-	}
+		if !columnSet[caseIDCol] {
+			return nil, fmt.Errorf("case_id column %q not found (available: %v)", caseIDCol, columnNames(columns))
+		}
+		if !columnSet[activityCol] {
+			return nil, fmt.Errorf("activity column %q not found (available: %v)", activityCol, columnNames(columns))
+		}
+		if !columnSet[timestampCol] {
+			return nil, fmt.Errorf("timestamp column %q not found (available: %v)", timestampCol, columnNames(columns))
+		}
 
-	// Use DuckDB's read_csv_auto for automatic schema inference
-	query := fmt.Sprintf(`
-		COPY (
-			SELECT
-				"%s" as case_id,
-				"%s" as activity,
-				epoch_ns(TRY_CAST("%s" AS TIMESTAMP)) as timestamp,
-				%s as resource
-			FROM read_csv_auto('%s', header=true)
-		) TO '%s' (FORMAT PARQUET, COMPRESSION '%s')
-	`, caseIDCol, activityCol, timestampCol, resourceExpr, inputPath, outputPath, compressionStr)
+		resourceExpr := "NULL"
+		if columnSet[resourceCol] {
+			resourceExpr = fmt.Sprintf(`"%s"`, resourceCol)
+		}
+
+		query = fmt.Sprintf(`
+			COPY (
+				SELECT
+					"%s" as case_id,
+					"%s" as activity,
+					epoch_ns(TRY_CAST("%s" AS TIMESTAMP)) as timestamp,
+					%s as resource
+				FROM read_csv_auto('%s', header=true)
+			) TO '%s' (FORMAT PARQUET, COMPRESSION '%s')
+		`, caseIDCol, activityCol, timestampCol, resourceExpr, inputPath, outputPath, compressionStr)
+	} else {
+		// Generic mode: copy all columns as-is
+		query = fmt.Sprintf(`
+			COPY (
+				SELECT * FROM read_csv_auto('%s', header=true)
+			) TO '%s' (FORMAT PARQUET, COMPRESSION '%s')
+		`, inputPath, outputPath, compressionStr)
+	}
 
 	if _, err := r.db.Exec(query); err != nil {
 		return nil, fmt.Errorf("duckdb csv conversion failed: %w", err)
