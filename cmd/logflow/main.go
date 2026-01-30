@@ -193,6 +193,29 @@ func runConvert(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Validate process mining plugin flags
+	if enableProcessMining {
+		missing := []string{}
+		if csvCaseIDColumn == "" {
+			missing = append(missing, "--case-id")
+		}
+		if csvActivityColumn == "" {
+			missing = append(missing, "--activity")
+		}
+		if csvTimestampColumn == "" {
+			missing = append(missing, "--timestamp")
+		}
+		if len(missing) > 0 {
+			return fmt.Errorf("--process-mining requires column mapping flags: %s", strings.Join(missing, ", "))
+		}
+	} else {
+		// Process mining not enabled — ignore any column flags
+		csvCaseIDColumn = ""
+		csvActivityColumn = ""
+		csvTimestampColumn = ""
+		csvResourceColumn = ""
+	}
+
 	// Auto-detect format if not specified
 	format := detectFormat(inputFile, formatFlag)
 	if format == parser.FormatUnknown {
