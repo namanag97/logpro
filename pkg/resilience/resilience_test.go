@@ -253,7 +253,8 @@ func TestNewCheckpoint(t *testing.T) {
 
 func TestCheckpointUpdate(t *testing.T) {
 	cp := NewCheckpoint("in.csv", "out.parquet", "hash")
-	cp.Update(1024, 100)
+	// Update(row, byteOffset)
+	cp.Update(100, 1024)
 
 	if cp.LastByteOffset != 1024 {
 		t.Errorf("LastByteOffset = %d, want 1024", cp.LastByteOffset)
