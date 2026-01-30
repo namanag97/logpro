@@ -72,11 +72,9 @@ type GeneratedInfo struct {
 
 // ContractConfig configures contract generation.
 type ContractConfig struct {
-	// Schema column mappings
-	CaseIDColumn    string
-	ActivityColumn  string
-	TimestampColumn string
-	ResourceColumn  string
+	// ColumnMapping maps logical role names to physical column names.
+	// For PM: {"case_id":"col", "activity":"col", "timestamp":"col", "resource":"col"}.
+	ColumnMapping map[string]string
 
 	// SLO settings
 	NullTolerance  float64
@@ -86,16 +84,23 @@ type ContractConfig struct {
 	ToolVersion string
 }
 
+// Column returns the physical column name for a role, or the role itself as default.
+func (c ContractConfig) Column(role string) string {
+	if c.ColumnMapping != nil {
+		if v, ok := c.ColumnMapping[role]; ok && v != "" {
+			return v
+		}
+	}
+	return role // default: role name is the column name
+}
+
 // DefaultConfig returns default contract configuration.
 func DefaultConfig() ContractConfig {
 	return ContractConfig{
-		CaseIDColumn:    "case_id",
-		ActivityColumn:  "activity",
-		TimestampColumn: "timestamp",
-		ResourceColumn:  "resource",
-		NullTolerance:   0.05, // 5% null tolerance
-		TimestampOrder:  "asc",
-		ToolVersion:     "0.1.0",
+		ColumnMapping:  make(map[string]string),
+		NullTolerance:  0.05, // 5% null tolerance
+		TimestampOrder: "asc",
+		ToolVersion:    "0.1.0",
 	}
 }
 
