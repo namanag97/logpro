@@ -222,7 +222,7 @@ func (p *Pipeline) Process(ctx context.Context, inputPath string, opts Options) 
 	return result, nil
 }
 
-// ProcessBatch processes multiple files.
+// ProcessBatch processes multiple files using flow.ConcurrencyLimiter.
 func (p *Pipeline) ProcessBatch(ctx context.Context, inputs []string, opts Options) ([]*Result, error) {
 	if len(inputs) == 0 {
 		return nil, nil
@@ -240,12 +240,11 @@ func (p *Pipeline) ProcessBatch(ctx context.Context, inputs []string, opts Optio
 	}
 	p.totalBytes.Store(totalSize)
 
-	// Process files
+	// Process files using flow.ConcurrencyLimiter
 	results := make([]*Result, len(inputs))
 	errors := make([]error, len(inputs))
 
 	var wg sync.WaitGroup
-	semaphore := make(chan struct{}, p.workers)
 
 	for i, input := range inputs {
 		if p.cancelled.Load() {
@@ -256,13 +255,12 @@ func (p *Pipeline) ProcessBatch(ctx context.Context, inputs []string, opts Optio
 		go func(idx int, inputPath string) {
 			defer wg.Done()
 
-			select {
-			case semaphore <- struct{}{}:
-				defer func() { <-semaphore }()
-			case <-ctx.Done():
-				errors[idx] = ctx.Err()
+			// Acquire via ConcurrencyLimiter instead of raw semaphore
+			if err := p.concLimiter.Acquire(ctx, "batch"); err != nil {
+				errors[idx] = err
 				return
 			}
+			defer p.concLimiter.Release("batch")
 
 			fileOpts := opts
 			result, err := p.Process(ctx, inputPath, fileOpts)
