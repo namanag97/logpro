@@ -80,10 +80,10 @@ func (p *DuckDBPipeline) IngestCSVFromStdin(ctx context.Context, outputPath stri
 
 	result, err := reader.ConvertCSVToParquetFromStdin(
 		outputPath,
-		p.parserCfg.CaseIDColumn,
-		p.parserCfg.ActivityColumn,
-		p.parserCfg.TimestampColumn,
-		p.parserCfg.ResourceColumn,
+		p.parserCfg.Column("case_id"),
+		p.parserCfg.Column("activity"),
+		p.parserCfg.Column("timestamp"),
+		p.parserCfg.Column("resource"),
 		p.writerCfg.Compression,
 	)
 	if err != nil {
