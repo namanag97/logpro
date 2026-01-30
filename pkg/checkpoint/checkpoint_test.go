@@ -227,8 +227,9 @@ func TestCheckpointProgress(t *testing.T) {
 	cp.Update(5000, 100)
 
 	pct := cp.Progress(10000)
-	if pct < 0.49 || pct > 0.51 {
-		t.Errorf("Progress = %f, want ~0.5", pct)
+	// Progress returns percentage (0-100), not fraction
+	if pct < 49 || pct > 51 {
+		t.Errorf("Progress = %f, want ~50.0", pct)
 	}
 }
 
