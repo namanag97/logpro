@@ -240,6 +240,22 @@ func (p *Pipeline) Process(ctx context.Context, inputPath string, opts Options) 
 
 	p.recordSuccess(result, parseTime)
 
+	// Step 8: Run post-processors
+	coreResult := &core.ConversionResult{
+		InputPath:  inputPath,
+		OutputPath: outputPath,
+		RowCount:   result.RowCount,
+		Duration:   result.Duration,
+		Throughput: result.Throughput,
+	}
+	for _, pp := range p.plugins.GetPostProcessors() {
+		if pp.CanProcess(coreResult) {
+			if modified, err := pp.PostProcess(ctx, coreResult); err == nil {
+				coreResult = modified
+			}
+		}
+	}
+
 	return result, nil
 }
 
