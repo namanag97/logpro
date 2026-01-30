@@ -66,8 +66,8 @@ func TestJSONDecoder_Decode_JSONL(t *testing.T) {
 		if batch.Errors != nil {
 			t.Fatalf("Batch error: %v", batch.Errors)
 		}
-		totalRows += batch.Record.NumRows()
-		batch.Record.Release()
+		totalRows += batch.Batch.NumRows()
+		batch.Batch.Release()
 	}
 
 	if totalRows != 3 {
@@ -97,8 +97,8 @@ func TestJSONDecoder_Decode_JSONArray(t *testing.T) {
 		if batch.Errors != nil {
 			t.Fatalf("Batch error: %v", batch.Errors)
 		}
-		totalRows += batch.Record.NumRows()
-		batch.Record.Release()
+		totalRows += batch.Batch.NumRows()
+		batch.Batch.Release()
 	}
 
 	if totalRows != 3 {
@@ -130,8 +130,8 @@ func TestJSONDecoder_MalformedJSON(t *testing.T) {
 		if batch.Errors != nil {
 			continue // Skip batches with errors
 		}
-		totalRows += batch.Record.NumRows()
-		batch.Record.Release()
+		totalRows += batch.Batch.NumRows()
+		batch.Batch.Release()
 	}
 
 	// Should have at least the valid rows
