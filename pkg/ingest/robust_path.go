@@ -241,36 +241,54 @@ RecoveredRows: recoveredCount,
 return result, nil
 }
 
-// readLine reads a line handling embedded newlines in quotes.
+// lineBuffer is a reusable buffer for readLine to avoid per-line allocations.
+type lineBuffer struct {
+	buf []byte
+}
+
+// readLineInto reads a line handling embedded newlines in quotes, reusing lb.
+func (r *RobustPath) readLineInto(lb *lineBuffer, reader *bufio.Reader) ([]byte, error) {
+	lb.buf = lb.buf[:0]
+	inQuote := false
+
+	for {
+		part, err := reader.ReadBytes('\n')
+		if len(part) > 0 {
+			lb.buf = append(lb.buf, part...)
+
+			for _, b := range part {
+				if b == '"' {
+					inQuote = !inQuote
+				}
+			}
+
+			if !inQuote {
+				line := lb.buf
+				// Trim trailing \r\n in place
+				for len(line) > 0 && (line[len(line)-1] == '\n' || line[len(line)-1] == '\r') {
+					line = line[:len(line)-1]
+				}
+				return line, nil
+			}
+		}
+
+		if err != nil {
+			if err == io.EOF && len(lb.buf) > 0 {
+				line := lb.buf
+				for len(line) > 0 && (line[len(line)-1] == '\n' || line[len(line)-1] == '\r') {
+					line = line[:len(line)-1]
+				}
+				return line, nil
+			}
+			return lb.buf, err
+		}
+	}
+}
+
+// readLine reads a line handling embedded newlines in quotes (allocating version).
 func (r *RobustPath) readLine(reader *bufio.Reader) ([]byte, error) {
-var line []byte
-inQuote := false
-
-for {
-part, err := reader.ReadBytes('\n')
-if len(part) > 0 {
-line = append(line, part...)
-
-// Count quotes to track state
-for _, b := range part {
-if b == '"' {
-inQuote = !inQuote
-}
-}
-
-// If we're not in a quote, line is complete
-if !inQuote {
-return bytes.TrimRight(line, "\r\n"), nil
-}
-}
-
-if err != nil {
-if err == io.EOF && len(line) > 0 {
-return bytes.TrimRight(line, "\r\n"), nil
-}
-return line, err
-}
-}
+	var lb lineBuffer
+	return r.readLineInto(&lb, reader)
 }
 
 // csvFieldsBuf is a reusable buffer for parseCSVLine results.
