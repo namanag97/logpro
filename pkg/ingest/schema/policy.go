@@ -1,6 +1,8 @@
 package schema
 
 import (
+	"strings"
+
 	"github.com/apache/arrow/go/v14/arrow"
 )
 
