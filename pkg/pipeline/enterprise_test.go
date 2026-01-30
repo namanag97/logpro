@@ -45,13 +45,13 @@ func (m *entMockSink) Write(ctx context.Context, in <-chan *Event) error {
 }
 func (m *entMockSink) Close() error { return nil }
 
-type mockProcessor struct {
+type entMockProcessor struct {
 	name      string
 	processed int
 }
 
-func (m *mockProcessor) Name() string { return m.name }
-func (m *mockProcessor) Process(ctx context.Context, in <-chan *Event, out chan<- *Event) error {
+func (m *entMockProcessor) Name() string { return m.name }
+func (m *entMockProcessor) Process(ctx context.Context, in <-chan *Event, out chan<- *Event) error {
 	defer close(out)
 	for e := range in {
 		m.processed++
@@ -89,7 +89,7 @@ func TestDefaultEnterpriseConfig(t *testing.T) {
 // --- TracedProcessor tests ---
 
 func TestTracedProcessorName(t *testing.T) {
-	inner := &mockProcessor{name: "inner"}
+	inner := &entMockProcessor{name: "inner"}
 	tracer := telemetry.NewTracer("test")
 	tp := NewTracedProcessor(inner, tracer)
 
@@ -99,7 +99,7 @@ func TestTracedProcessorName(t *testing.T) {
 }
 
 func TestTracedProcessorProcess(t *testing.T) {
-	inner := &mockProcessor{name: "inner"}
+	inner := &entMockProcessor{name: "inner"}
 	tracer := telemetry.NewTracer("test")
 	tp := NewTracedProcessor(inner, tracer)
 
@@ -131,7 +131,7 @@ func TestTracedProcessorProcess(t *testing.T) {
 // --- ResilientProcessor tests ---
 
 func TestResilientProcessorName(t *testing.T) {
-	inner := &mockProcessor{name: "resilient-inner"}
+	inner := &entMockProcessor{name: "resilient-inner"}
 	cb := resilience.NewCircuitBreaker()
 	pp := resilience.NewPoisonPillHandler()
 	rp := NewResilientProcessor(inner, cb, pp)
@@ -142,7 +142,7 @@ func TestResilientProcessorName(t *testing.T) {
 }
 
 func TestResilientProcessorProcess(t *testing.T) {
-	inner := &mockProcessor{name: "inner"}
+	inner := &entMockProcessor{name: "inner"}
 	cb := resilience.NewCircuitBreaker().WithMaxConcurrent(1000)
 	pp := resilience.NewPoisonPillHandler()
 	rp := NewResilientProcessor(inner, cb, pp)
@@ -180,7 +180,7 @@ func TestResilientProcessorCircuitBreakerState(t *testing.T) {
 // --- CheckpointedProcessor tests ---
 
 func TestCheckpointedProcessorName(t *testing.T) {
-	inner := &mockProcessor{name: "cp-inner"}
+	inner := &entMockProcessor{name: "cp-inner"}
 	cp := resilience.NewCheckpoint("in.csv", "out.parquet", "hash")
 	cpp := NewCheckpointedProcessor(inner, cp, 2)
 
@@ -190,7 +190,7 @@ func TestCheckpointedProcessorName(t *testing.T) {
 }
 
 func TestCheckpointedProcessorProcess(t *testing.T) {
-	inner := &mockProcessor{name: "inner"}
+	inner := &entMockProcessor{name: "inner"}
 	cp := resilience.NewCheckpoint("in.csv", "out.parquet", "hash")
 	cpp := NewCheckpointedProcessor(inner, cp, 2)
 
@@ -258,7 +258,7 @@ func TestDefaultDLQConfig(t *testing.T) {
 
 func TestDLQProcessorName(t *testing.T) {
 	dir := t.TempDir()
-	inner := &mockProcessor{name: "dlq-inner"}
+	inner := &entMockProcessor{name: "dlq-inner"}
 	dlq := NewDLQWriter(DefaultDLQConfig(dir))
 	dp := NewDLQProcessor(inner, dlq, "job1", "test.csv")
 
