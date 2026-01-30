@@ -219,11 +219,14 @@ func TestCSVParserContextCancel(t *testing.T) {
 	cancel()
 
 	p := NewCSVParser(DefaultConfig())
-	out := make(chan *model.Event, 10)
+	out := make(chan *model.Event, 100)
 
-	err := p.Parse(ctx, strings.NewReader(input), out)
-	// Should handle cancellation gracefully
-	_ = err
+	go func() {
+		defer close(out)
+		_ = p.Parse(ctx, strings.NewReader(input), out)
+	}()
+
+	// Drain whatever was sent
 	drainChannel(out)
 }
 
