@@ -89,3 +89,19 @@ func DefaultConfig() Config {
 		RowGroupSize: 128 * 1024 * 1024,     // 128MB row groups (Parquet default)
 	}
 }
+
+// MapCompressionCodec maps a compression name string to an Arrow compress.Compression codec.
+func MapCompressionCodec(name string) compress.Compression {
+	switch name {
+	case "snappy":
+		return compress.Codecs.Snappy
+	case "gzip":
+		return compress.Codecs.Gzip
+	case "zstd":
+		return compress.Codecs.Zstd
+	case "lz4":
+		return compress.Codecs.Lz4
+	default:
+		return compress.Codecs.Snappy
+	}
+}
