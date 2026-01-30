@@ -148,8 +148,6 @@ func benchFormat(b *testing.B, key string, noisy bool) {
 			b.Fatalf("stat input: %v", err)
 		}
 		inputSize = info.Size()
-		_ = setupDone
-		_ = t
 	}
 	b.StartTimer()
 
