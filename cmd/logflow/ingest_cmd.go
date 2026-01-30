@@ -21,6 +21,7 @@ var (
 	ingestProfile     bool
 	ingestWorkers     int
 	ingestMaxErrors   int
+	ingestSource      string
 )
 
 var ingestCmd = &cobra.Command{
