@@ -310,33 +310,33 @@ func TestCheckpointManager(t *testing.T) {
 
 func TestCheckpointManagerComplete(t *testing.T) {
 	dir := t.TempDir()
-	cm := NewCheckpointManager(dir)
+	cm, _ := NewCheckpointManager(dir)
 	_ = cm.Create("job1", "input.csv")
 
 	cm.Complete("job1")
 
 	cp := cm.Get("job1")
-	if cp.Status != CheckpointCompleted {
-		t.Errorf("status = %d, want CheckpointCompleted(%d)", cp.Status, CheckpointCompleted)
+	if cp.Status != CheckpointStatusCompleted {
+		t.Errorf("status = %q, want %q", cp.Status, CheckpointStatusCompleted)
 	}
 }
 
 func TestCheckpointManagerFail(t *testing.T) {
 	dir := t.TempDir()
-	cm := NewCheckpointManager(dir)
+	cm, _ := NewCheckpointManager(dir)
 	_ = cm.Create("job1", "input.csv")
 
 	cm.Fail("job1", nil)
 
 	cp := cm.Get("job1")
-	if cp.Status != CheckpointFailed {
-		t.Errorf("status = %d, want CheckpointFailed(%d)", cp.Status, CheckpointFailed)
+	if cp.Status != CheckpointStatusFailed {
+		t.Errorf("status = %q, want %q", cp.Status, CheckpointStatusFailed)
 	}
 }
 
 func TestCheckpointManagerListIncomplete(t *testing.T) {
 	dir := t.TempDir()
-	cm := NewCheckpointManager(dir)
+	cm, _ := NewCheckpointManager(dir)
 	_ = cm.Create("job1", "a.csv")
 	_ = cm.Create("job2", "b.csv")
 	cm.Complete("job2")
