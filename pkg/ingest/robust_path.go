@@ -609,12 +609,12 @@ func (r *RobustPath) appendRecord(builders []array.Builder, types []ColumnType, 
 			value = fields[i]
 		}
 
-		if len(value) == 0 || r.isNullValue(value) {
+		// Trim once upfront, then check null on the trimmed result
+		trimmed := bytes.TrimSpace(value)
+		if len(trimmed) == 0 || r.isNullValueTrimmed(trimmed) {
 			builder.AppendNull()
 			continue
 		}
-
-		trimmed := bytes.TrimSpace(value)
 
 		switch types[i] {
 		case TypeInt64:
