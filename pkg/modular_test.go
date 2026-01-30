@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/logflow/logflow/pkg/adapters"
 	"github.com/logflow/logflow/pkg/core"
 	"github.com/logflow/logflow/pkg/engine"
 	"github.com/logflow/logflow/pkg/ingest/detect"
