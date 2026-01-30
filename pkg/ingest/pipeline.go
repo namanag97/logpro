@@ -155,6 +155,9 @@ func (p *Pipeline) SetProgressCallback(fn func(PipelineProgress)) {
 	p.onProgress = fn
 }
 
+// Plugins returns the plugin registry.
+func (p *Pipeline) Plugins() *core.PluginRegistry { return p.plugins }
+
 // Process processes a single file.
 func (p *Pipeline) Process(ctx context.Context, inputPath string, opts Options) (*Result, error) {
 	if p.cancelled.Load() {
