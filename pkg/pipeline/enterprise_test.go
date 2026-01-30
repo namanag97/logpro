@@ -583,7 +583,7 @@ func TestDeduplicateBatch(t *testing.T) {
 		{"id": "3", "v": "d"},
 	}
 
-	result := DeduplicateBatch(records, []string{"id"})
+	result, _ := DeduplicateBatch(records, []string{"id"})
 	if len(result) != 3 {
 		t.Errorf("deduplicated batch len = %d, want 3", len(result))
 	}
