@@ -561,10 +561,12 @@ func (r *RobustPath) detectFieldType(value []byte) ColumnType {
 		return TypeFloat64
 	}
 
-	// Check for timestamp using shared layouts
-	for _, layout := range timestampLayouts {
-		if _, err := time.Parse(layout, s); err == nil {
-			return TypeTimestamp
+	// Check for timestamp using shared layouts (fast-reject first)
+	if couldBeTimestamp(s) {
+		for _, layout := range timestampLayouts {
+			if _, err := time.Parse(layout, s); err == nil {
+				return TypeTimestamp
+			}
 		}
 	}
 
