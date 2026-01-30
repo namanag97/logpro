@@ -360,7 +360,7 @@ func TestCheckpointManagerDelete(t *testing.T) {
 
 func TestCheckpointManagerCanResume(t *testing.T) {
 	dir := t.TempDir()
-	cm := NewCheckpointManager(dir)
+	cm, _ := NewCheckpointManager(dir)
 	cp := cm.Create("job1", "input.csv")
 	cm.Update("job1", func(c *Checkpoint) {
 		c.BytesRead = 1000
