@@ -68,8 +68,8 @@ func TestCSVDecoder_Decode_Basic(t *testing.T) {
 
 	totalRows := int64(0)
 	for batch := range ch {
-		if batch.Errors != nil {
-			t.Fatalf("Batch error: %v", batch.Errors)
+		if len(batch.Errors) > 0 {
+			t.Fatalf("Batch errors: %v", batch.Errors)
 		}
 		totalRows += batch.Batch.NumRows()
 		batch.Batch.Release()
@@ -99,8 +99,8 @@ func TestCSVDecoder_QuotedFields(t *testing.T) {
 
 	totalRows := int64(0)
 	for batch := range ch {
-		if batch.Errors != nil {
-			t.Fatalf("Batch error: %v", batch.Errors)
+		if len(batch.Errors) > 0 {
+			t.Fatalf("Batch errors: %v", batch.Errors)
 		}
 		totalRows += batch.Batch.NumRows()
 		batch.Batch.Release()
