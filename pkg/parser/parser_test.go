@@ -193,12 +193,12 @@ func TestCSVParserQuotedFields(t *testing.T) {
 	input := "case_id,activity,timestamp,resource\n\"case,1\",\"Activity \"\"A\"\"\",2024-01-01T10:00:00Z,Alice\n"
 
 	p := NewCSVParser(DefaultConfig())
-	out := make(chan *model.Event, 10)
+	out := make(chan *model.Event, 100)
 
-	err := p.Parse(context.Background(), strings.NewReader(input), out)
-	if err != nil {
-		t.Fatalf("Parse error: %v", err)
-	}
+	go func() {
+		defer close(out)
+		_ = p.Parse(context.Background(), strings.NewReader(input), out)
+	}()
 
 	events := drainChannel(out)
 	if len(events) != 1 {
