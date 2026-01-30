@@ -137,15 +137,9 @@ type Config struct {
 	SinkPath    string
 	Compression string
 
-	// Column mapping — process-mining specific (kept for backward compatibility)
-	CaseIDColumn    string
-	ActivityColumn  string
-	TimestampColumn string
-	ResourceColumn  string
-
-	// ColumnMapping is a generic mapping from logical role to physical column name.
-	// Process-mining columns (case_id, activity, timestamp, resource) are
-	// populated by the fields above; additional columns can be added freely.
+	// ColumnMapping maps logical role names to physical column names.
+	// For process mining: {"case_id":"col", "activity":"col", "timestamp":"col", "resource":"col"}.
+	// For general use: leave empty — all columns are preserved as-is.
 	ColumnMapping map[string]string
 
 	// Processing options
@@ -155,7 +149,7 @@ type Config struct {
 
 	// Error handling
 	ErrorPolicy    ErrorPolicy
-	MaxErrors      int64 // Maximum errors before aborting (0 = unlimited)
+	MaxErrors      int64  // Maximum errors before aborting (0 = unlimited)
 	QuarantinePath string // Path for quarantined records
 
 	// Callbacks
@@ -167,13 +161,17 @@ type Config struct {
 	ProcessorOptions map[string]interface{}
 }
 
+// Column returns the physical column name for a logical role, or "" if unmapped.
+func (c *Config) Column(role string) string {
+	if c.ColumnMapping != nil {
+		return c.ColumnMapping[role]
+	}
+	return ""
+}
+
 // DefaultConfig returns a configuration with sensible defaults.
 func DefaultConfig() Config {
 	return Config{
-		CaseIDColumn:     "case:concept:name",
-		ActivityColumn:   "concept:name",
-		TimestampColumn:  "time:timestamp",
-		ResourceColumn:   "org:resource",
 		ColumnMapping:    make(map[string]string),
 		BufferSize:       64 * 1024,
 		BatchSize:        1024,
@@ -182,30 +180,6 @@ func DefaultConfig() Config {
 		MaxErrors:        0,               // No limit by default
 		ProcessorOptions: make(map[string]interface{}),
 	}
-}
-
-// ResolveColumnMapping builds a complete ColumnMapping from the legacy
-// process-mining fields. Call this before passing Config to generic consumers.
-func (c *Config) ResolveColumnMapping() map[string]string {
-	m := make(map[string]string)
-	// Copy existing generic mappings first
-	for k, v := range c.ColumnMapping {
-		m[k] = v
-	}
-	// Overlay process-mining specific fields (if set)
-	if c.CaseIDColumn != "" {
-		m["case_id"] = c.CaseIDColumn
-	}
-	if c.ActivityColumn != "" {
-		m["activity"] = c.ActivityColumn
-	}
-	if c.TimestampColumn != "" {
-		m["timestamp"] = c.TimestampColumn
-	}
-	if c.ResourceColumn != "" {
-		m["resource"] = c.ResourceColumn
-	}
-	return m
 }
 
 // Complexity represents the computational complexity of an operation.
