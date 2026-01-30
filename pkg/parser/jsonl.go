@@ -200,25 +200,29 @@ func (p *JSONLParser) processKeyValue(line []byte, keyStart, keyEnd, valueStart,
 	key := line[keyStart:keyEnd]
 	value := extractJSONValue(line[valueStart:valueEnd])
 
-	// Map to standard event fields
-	switch {
-	case p.matchesColumn(key, p.cfg.CaseIDColumn):
-		event.CaseID = append(event.CaseID[:0], value...)
-
-	case p.matchesColumn(key, p.cfg.ActivityColumn):
-		event.Activity = append(event.Activity[:0], value...)
-
-	case p.matchesColumn(key, p.cfg.TimestampColumn):
-		ts, err := pool.ParseTimestampNanosFast(value)
-		if err == nil {
-			event.Timestamp = ts
+	// Map to event fields if PM columns are configured, otherwise all go to Attributes
+	mapped := false
+	if p.cfg.HasPMColumns() {
+		switch {
+		case p.matchesColumn(key, p.cfg.Column("case_id")):
+			event.CaseID = append(event.CaseID[:0], value...)
+			mapped = true
+		case p.matchesColumn(key, p.cfg.Column("activity")):
+			event.Activity = append(event.Activity[:0], value...)
+			mapped = true
+		case p.matchesColumn(key, p.cfg.Column("timestamp")):
+			ts, err := pool.ParseTimestampNanosFast(value)
+			if err == nil {
+				event.Timestamp = ts
+			}
+			mapped = true
+		case p.matchesColumn(key, p.cfg.Column("resource")):
+			event.Resource = append(event.Resource[:0], value...)
+			mapped = true
 		}
+	}
 
-	case p.matchesColumn(key, p.cfg.ResourceColumn):
-		event.Resource = append(event.Resource[:0], value...)
-
-	default:
-		// Store as attribute
+	if !mapped {
 		attr := model.Attribute{
 			Key:   make([]byte, len(key)),
 			Value: make([]byte, len(value)),
