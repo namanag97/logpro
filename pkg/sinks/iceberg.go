@@ -257,14 +257,37 @@ func (s *IcebergSink) Write(ctx context.Context, in <-chan *pipeline.Event) erro
 }
 
 func (s *IcebergSink) appendEvent(event *pipeline.Event) {
-	s.caseIDBuilder.Append(string(event.CaseID))
-	s.activityBuilder.Append(string(event.Activity))
-	s.timestampBuilder.Append(event.Timestamp)
-
-	if len(event.Resource) > 0 {
-		s.resourceBuilder.Append(string(event.Resource))
-	} else {
-		s.resourceBuilder.AppendNull()
+	// Map the event's fields to the schema columns by name.
+	// The first 4 columns (if named case_id, activity, timestamp, resource)
+	// use the structured event fields; others come from Attributes.
+	for i, field := range s.schema.Fields() {
+		switch field.Name {
+		case "case_id":
+			s.builders[i].(*array.StringBuilder).Append(string(event.CaseID))
+		case "activity":
+			s.builders[i].(*array.StringBuilder).Append(string(event.Activity))
+		case "timestamp":
+			s.builders[i].(*array.Int64Builder).Append(event.Timestamp)
+		case "resource":
+			if len(event.Resource) > 0 {
+				s.builders[i].(*array.StringBuilder).Append(string(event.Resource))
+			} else {
+				s.builders[i].AppendNull()
+			}
+		default:
+			// Look up in event Attributes
+			found := false
+			for _, attr := range event.Attributes {
+				if string(attr.Key) == field.Name {
+					s.builders[i].(*array.StringBuilder).Append(string(attr.Value))
+					found = true
+					break
+				}
+			}
+			if !found {
+				s.builders[i].AppendNull()
+			}
+		}
 	}
 }
 
@@ -273,28 +296,20 @@ func (s *IcebergSink) flushBatch() error {
 		return nil
 	}
 
-	caseIDArray := s.caseIDBuilder.NewArray()
-	activityArray := s.activityBuilder.NewArray()
-	timestampArray := s.timestampBuilder.NewArray()
-	resourceArray := s.resourceBuilder.NewArray()
+	arrays := make([]arrow.Array, len(s.builders))
+	for i, b := range s.builders {
+		arrays[i] = b.NewArray()
+		defer arrays[i].Release()
+	}
 
-	defer caseIDArray.Release()
-	defer activityArray.Release()
-	defer timestampArray.Release()
-	defer resourceArray.Release()
-
-	batch := array.NewRecord(s.schema, []arrow.Array{
-		caseIDArray,
-		activityArray,
-		timestampArray,
-		resourceArray,
-	}, int64(s.rowCount))
+	batch := array.NewRecord(s.schema, arrays, int64(s.rowCount))
 	defer batch.Release()
 
 	if err := s.currentWriter.Write(batch); err != nil {
 		return fmt.Errorf("failed to write batch: %w", err)
 	}
 
+	s.totalRows += int64(s.rowCount)
 	s.batchCount++
 	s.rowCount = 0
 	return nil
