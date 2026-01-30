@@ -157,6 +157,9 @@ func init() {
 	// Contract flags
 	convertCmd.Flags().BoolVar(&generateContract, "contract", false, "Generate data contract (.contract.json) alongside output")
 
+	// Plugin flags
+	convertCmd.Flags().BoolVar(&enableProcessMining, "process-mining", false, "Enable process mining plugin (requires --case-id, --activity, --timestamp)")
+
 	convertCmd.MarkFlagRequired("input")
 	convertCmd.MarkFlagRequired("output")
 
