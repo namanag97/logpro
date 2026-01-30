@@ -143,13 +143,15 @@ func TestCSVParserBasic(t *testing.T) {
 	input := "case_id,activity,timestamp,resource\nc1,A,2024-01-01T10:00:00Z,Alice\nc2,B,2024-01-01T11:00:00Z,Bob\n"
 
 	p := NewCSVParser(DefaultConfig())
-	out := make(chan *model.Event, 10)
+	out := make(chan *model.Event, 100)
 	ctx := context.Background()
 
-	err := p.Parse(ctx, strings.NewReader(input), out)
-	if err != nil {
-		t.Fatalf("Parse error: %v", err)
-	}
+	go func() {
+		defer close(out)
+		if err := p.Parse(ctx, strings.NewReader(input), out); err != nil {
+			t.Errorf("Parse error: %v", err)
+		}
+	}()
 
 	events := drainChannel(out)
 	if len(events) != 2 {
