@@ -526,7 +526,7 @@ func TestNewDeduplicator(t *testing.T) {
 func TestDeduplicatorCheckAndAdd(t *testing.T) {
 	d := NewDeduplicator(DeduplicationConfig{
 		KeyColumns: []string{"id"},
-		Strategy:   DeduplicationSkip,
+		Strategy:   DeduplicationKeepFirst,
 	})
 
 	record := map[string]interface{}{"id": "1", "value": "a"}
