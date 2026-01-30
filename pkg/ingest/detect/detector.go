@@ -135,8 +135,8 @@ func (d *Detector) Analyze(ctx context.Context, source core.Source) (*Analysis, 
 		!analysis.HasRaggedRows &&
 		!analysis.HasEmbeddedNewlines
 
-	// Select strategy
-	analysis.RecommendedStrategy, analysis.Confidence = selectStrategy(analysis)
+	// Select strategy using pluggable rule engine
+	analysis.RecommendedStrategy, analysis.Confidence = EvaluateRules(analysis)
 
 	return analysis, nil
 }
