@@ -23,6 +23,8 @@ var (
 	ingestWorkers     int
 	ingestMaxErrors   int
 	ingestSource      string
+	ingestErrorPolicy string
+	ingestQuarantine  string
 )
 
 var ingestCmd = &cobra.Command{
