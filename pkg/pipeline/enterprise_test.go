@@ -14,13 +14,13 @@ import (
 
 // --- Mock Source/Sink/Processor for testing ---
 
-type mockSource struct {
+type entMockSource struct {
 	events []*Event
 }
 
-func (m *mockSource) Name() string { return "mock-source" }
-func (m *mockSource) SupportsFormat(format string) bool { return true }
-func (m *mockSource) Read(ctx context.Context, r interface{}, out chan<- *Event) error {
+func (m *entMockSource) Name() string { return "mock-source" }
+func (m *entMockSource) SupportsFormat(format string) bool { return true }
+func (m *entMockSource) Read(ctx context.Context, r interface{}, out chan<- *Event) error {
 	defer close(out)
 	for _, e := range m.events {
 		select {
