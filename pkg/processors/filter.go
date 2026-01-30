@@ -7,7 +7,12 @@ import (
 	"regexp"
 
 	"github.com/logflow/logflow/pkg/pipeline"
+	"github.com/logflow/logflow/pkg/registry"
 )
+
+func init() {
+	registry.RegisterProcessor("filter", FilterProcessorFactory)
+}
 
 // FilterProcessor drops events based on rules.
 type FilterProcessor struct {
