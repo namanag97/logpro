@@ -103,6 +103,19 @@ return nil, fmt.Errorf("format %s not supported by robust path", analysis.Format
 
 // processCSV converts CSV with robust error handling.
 func (r *RobustPath) processCSV(ctx context.Context, inputPath, outputPath string, analysis *FileAnalysis, opts Options) (*Result, error) {
+	// Set up error handler based on policy
+	errHandler := ingerrors.NewHandler(opts.ErrorPolicy, opts.MaxErrors)
+	var quarantine ingerrors.Quarantine
+	if opts.ErrorPolicy == ingerrors.PolicyQuarantine && opts.QuarantinePath != "" {
+		fq, err := ingerrors.NewFileQuarantine(opts.QuarantinePath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create quarantine file: %w", err)
+		}
+		defer fq.Close()
+		quarantine = fq
+		errHandler.SetQuarantine(quarantine)
+	}
+
 // Open input file
 f, err := os.Open(inputPath)
 if err != nil {
