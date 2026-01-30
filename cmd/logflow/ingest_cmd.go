@@ -131,11 +131,15 @@ func runIngest(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Run ingestion
-	fmt.Printf("Ingesting: %s\n", inputPath)
+	// Run ingestion — use source-aware path if --source is provided
+	sourceURI := inputPath
+	if ingestSource != "" {
+		sourceURI = ingestSource
+	}
+	fmt.Printf("Ingesting: %s\n", sourceURI)
 	start := time.Now()
 
-	result, err := engine.Ingest(context.Background(), inputPath, opts)
+	result, err := engine.IngestSource(context.Background(), sourceURI, opts)
 	if err != nil {
 		return fmt.Errorf("ingestion failed: %w", err)
 	}
