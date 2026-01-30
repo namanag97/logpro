@@ -193,6 +193,13 @@ func (p *Pipeline) Process(ctx context.Context, inputPath string, opts Options) 
 		return nil, ctx.Err()
 	}
 
+	// Step 5.5: Run pre-processors
+	for _, pp := range p.plugins.GetPreProcessors() {
+		if err := pp.PreProcess(ctx, inputPath, nil); err != nil {
+			return nil, fmt.Errorf("pre-processor %s failed: %w", pp.Name(), err)
+		}
+	}
+
 	// Step 6: Execute
 	var result *Result
 	parseStart := time.Now()
