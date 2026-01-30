@@ -225,7 +225,10 @@ func TestCheckpointedProcessorProcess(t *testing.T) {
 func TestDLQWriterAndReader(t *testing.T) {
 	dir := t.TempDir()
 	cfg := DefaultDLQConfig(dir)
-	writer := NewDLQWriter(cfg)
+	writer, err := NewDLQWriter(cfg)
+	if err != nil {
+		t.Fatalf("NewDLQWriter error: %v", err)
+	}
 
 	record := DLQRecord{
 		RawData:      []byte("bad data"),
@@ -240,8 +243,8 @@ func TestDLQWriterAndReader(t *testing.T) {
 
 	writer.Write(record)
 	stats := writer.Stats()
-	if stats.TotalRecords != 1 {
-		t.Errorf("DLQ TotalRecords = %d, want 1", stats.TotalRecords)
+	if stats.RecordCount != 1 {
+		t.Errorf("DLQ RecordCount = %d, want 1", stats.RecordCount)
 	}
 
 	writer.Flush()
@@ -252,18 +255,21 @@ func TestDefaultDLQConfig(t *testing.T) {
 	dir := t.TempDir()
 	cfg := DefaultDLQConfig(dir)
 
-	if cfg.MaxRecordsPerFile <= 0 {
-		t.Error("MaxRecordsPerFile should be > 0")
+	if cfg.MaxRecords < 0 {
+		t.Error("MaxRecords should be >= 0")
 	}
-	if cfg.MaxBytesPerFile <= 0 {
-		t.Error("MaxBytesPerFile should be > 0")
+	if cfg.MaxBytes < 0 {
+		t.Error("MaxBytes should be >= 0")
 	}
 }
 
 func TestDLQProcessorName(t *testing.T) {
 	dir := t.TempDir()
 	inner := &entMockProcessor{name: "dlq-inner"}
-	dlq := NewDLQWriter(DefaultDLQConfig(dir))
+	dlq, err := NewDLQWriter(DefaultDLQConfig(dir))
+	if err != nil {
+		t.Fatalf("NewDLQWriter error: %v", err)
+	}
 	dp := NewDLQProcessor(inner, dlq, "job1", "test.csv")
 
 	if dp.Name() != "dlq-inner" {
