@@ -31,12 +31,12 @@ func (p Policy) String() string {
 	}
 }
 
-// ParsePolicy parses a policy string.
+// ParsePolicy parses a policy string (case-insensitive).
 func ParsePolicy(s string) Policy {
-	switch s {
+	switch strings.ToLower(s) {
 	case "strict":
 		return PolicyStrict
-	case "merge_nullable", "merge":
+	case "merge_nullable", "merge-nullable", "merge":
 		return PolicyMergeNullable
 	case "evolving", "evolve":
 		return PolicyEvolving
