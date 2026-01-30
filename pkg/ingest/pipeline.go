@@ -107,17 +107,24 @@ func NewPipeline() (*Pipeline, error) {
 	workers := runtime.NumCPU() * 2
 	queueSize := workers * 10
 
+	// Set up concurrency limiter with category-based limits
+	limiter := flow.NewConcurrencyLimiter()
+	limiter.SetLimit("file", workers)
+	limiter.SetLimit("batch", workers)
+
 	return &Pipeline{
-		detector:   NewDetector(),
-		fastPath:   fastPath,
-		robustPath: NewRobustPath(),
-		heuristics: NewHeuristicEngine(),
-		config:     GlobalConfig,
-		workers:    workers,
-		workerPool: make(chan struct{}, workers),
-		batchQueue: make(chan *batchWork, queueSize),
-		queueSize:  queueSize,
-		metrics:    &PipelineMetrics{},
+		detector:    NewDetector(),
+		fastPath:    fastPath,
+		robustPath:  NewRobustPath(),
+		heuristics:  NewHeuristicEngine(),
+		advDetector: detect.NewDetector(),
+		concLimiter: limiter,
+		config:      GlobalConfig,
+		workers:     workers,
+		workerPool:  make(chan struct{}, workers),
+		batchQueue:  make(chan *batchWork, queueSize),
+		queueSize:   queueSize,
+		metrics:     &PipelineMetrics{},
 	}, nil
 }
 
