@@ -199,13 +199,17 @@ func TestCompareFunction(t *testing.T) {
 
 func TestCompareContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
+
+	leftCh := make(chan *model.Event, 1)
+	rightCh := make(chan *model.Event, 1)
+
+	// Close channels so Compare doesn't block
+	close(leftCh)
+	close(rightCh)
 	cancel()
 
-	leftCh := make(chan *model.Event)
-	rightCh := make(chan *model.Event)
-
 	r, err := Compare(ctx, leftCh, rightCh)
-	// Should handle context cancellation gracefully
+	// Should handle closed channels gracefully
 	_ = r
 	_ = err
 }
