@@ -392,50 +392,49 @@ TypeTimestamp
 )
 
 // detectFieldType determines the type of a field value.
+// This is called only during the sample phase (typically 1000 rows), so
+// string allocation here is acceptable.
 func (r *RobustPath) detectFieldType(value []byte) ColumnType {
-if len(value) == 0 {
-return TypeNull
-}
+	if len(value) == 0 {
+		return TypeNull
+	}
 
-s := string(bytes.TrimSpace(value))
+	trimmed := bytes.TrimSpace(value)
+	if len(trimmed) == 0 {
+		return TypeNull
+	}
 
-// Check for null values
-switch s {
-case "", "NULL", "null", "NA", "N/A", "n/a", "None", "none", "nil", "-":
-return TypeNull
-}
+	// Check for null values (byte comparison, no alloc)
+	if r.isNullValue(trimmed) {
+		return TypeNull
+	}
 
-// Check for boolean
-switch s {
-case "true", "false", "True", "False", "TRUE", "FALSE", "1", "0", "yes", "no":
-return TypeBool
-}
+	s := string(trimmed)
 
-// Check for integer
-if _, err := strconv.ParseInt(s, 10, 64); err == nil {
-return TypeInt64
-}
+	// Check for boolean
+	switch s {
+	case "true", "false", "True", "False", "TRUE", "FALSE", "1", "0", "yes", "no":
+		return TypeBool
+	}
 
-// Check for float
-if _, err := strconv.ParseFloat(s, 64); err == nil {
-return TypeFloat64
-}
+	// Check for integer
+	if _, err := strconv.ParseInt(s, 10, 64); err == nil {
+		return TypeInt64
+	}
 
-// Check for timestamp (common formats)
-for _, layout := range []string{
-time.RFC3339,
-"2006-01-02T15:04:05",
-"2006-01-02 15:04:05",
-"2006-01-02",
-"01/02/2006",
-"02-01-2006",
-} {
-if _, err := time.Parse(layout, s); err == nil {
-return TypeTimestamp
-}
-}
+	// Check for float
+	if _, err := strconv.ParseFloat(s, 64); err == nil {
+		return TypeFloat64
+	}
 
-return TypeString
+	// Check for timestamp using shared layouts
+	for _, layout := range timestampLayouts {
+		if _, err := time.Parse(layout, s); err == nil {
+			return TypeTimestamp
+		}
+	}
+
+	return TypeString
 }
 
 // buildArrowSchema creates Arrow schema from headers and types.
