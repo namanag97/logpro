@@ -159,6 +159,10 @@ defer writer.Close()
 	csvBuf.fields = make([][]byte, 0, len(headers)+4)
 	csvBuf.tmp = make([]byte, 0, 1024)
 
+	// Reusable line buffer
+	var lb lineBuffer
+	lb.buf = make([]byte, 0, 4096)
+
 	var rowCount int64
 	var errorCount int64
 	var recoveredCount int64
@@ -171,7 +175,7 @@ defer writer.Close()
 		default:
 		}
 
-		line, err := r.readLine(reader)
+		line, err := r.readLineInto(&lb, reader)
 		if err == io.EOF {
 			break
 		}
