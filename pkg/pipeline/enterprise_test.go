@@ -530,12 +530,12 @@ func TestDeduplicatorCheckAndAdd(t *testing.T) {
 	})
 
 	record := map[string]interface{}{"id": "1", "value": "a"}
-	dup := d.CheckAndAdd(record)
+	dup, _ := d.CheckAndAdd(record)
 	if dup {
 		t.Error("first record should not be duplicate")
 	}
 
-	dup = d.CheckAndAdd(record)
+	dup, _ = d.CheckAndAdd(record)
 	if !dup {
 		t.Error("second identical record should be duplicate")
 	}
