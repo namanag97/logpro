@@ -303,8 +303,15 @@ func TestLocalBackendListIncomplete(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	_ = b.Save(ctx, &Checkpoint{ID: "j1", InputPath: "a.csv", Phase: "reading", BytesRead: 100})
-	_ = b.Save(ctx, &Checkpoint{ID: "j2", InputPath: "b.csv", Phase: "reading", BytesRead: 200})
+	mgr, _ := NewManager(dir)
+
+	cp1 := mgr.Create("j1", "a.csv", "out1.parquet")
+	cp1.Update(100, 50)
+	_ = b.Save(ctx, cp1)
+
+	cp2 := mgr.Create("j2", "b.csv", "out2.parquet")
+	cp2.Update(200, 100)
+	_ = b.Save(ctx, cp2)
 
 	list, err := b.ListIncomplete(ctx)
 	if err != nil {
