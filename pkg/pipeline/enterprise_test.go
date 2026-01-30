@@ -555,8 +555,8 @@ func TestDeduplicatorStats(t *testing.T) {
 	if stats.TotalSeen != 3 {
 		t.Errorf("TotalSeen = %d, want 3", stats.TotalSeen)
 	}
-	if stats.Duplicates != 1 {
-		t.Errorf("Duplicates = %d, want 1", stats.Duplicates)
+	if stats.DuplicateCount != 1 {
+		t.Errorf("DuplicateCount = %d, want 1", stats.DuplicateCount)
 	}
 }
 
