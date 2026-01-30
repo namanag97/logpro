@@ -367,7 +367,7 @@ func TestCheckpointManagerCanResume(t *testing.T) {
 	})
 
 	_ = cp
-	canResume := cm.CanResume("input.csv")
+	_, canResume := cm.CanResume("input.csv")
 	if !canResume {
 		t.Error("CanResume should return true for incomplete checkpoint")
 	}
@@ -377,9 +377,9 @@ func TestCheckpointManagerCanResume(t *testing.T) {
 
 func TestErrorHandlerStrict(t *testing.T) {
 	h := NewErrorHandler(ErrorPolicyStrict)
-	err := h.HandleError(ErrorRecord{
-		Type:    ErrorTypeMalformedRow,
-		Message: "bad row",
+	_, err := h.HandleError(ErrorRecord{
+		ErrorType: ErrorTypeMalformedRow,
+		Message:   "bad row",
 	})
 	if err == nil {
 		t.Error("strict policy should return error")
@@ -388,26 +388,26 @@ func TestErrorHandlerStrict(t *testing.T) {
 
 func TestErrorHandlerSkip(t *testing.T) {
 	h := NewErrorHandler(ErrorPolicySkip)
-	err := h.HandleError(ErrorRecord{
-		Type:    ErrorTypeMalformedRow,
-		Message: "bad row",
+	_, err := h.HandleError(ErrorRecord{
+		ErrorType: ErrorTypeMalformedRow,
+		Message:   "bad row",
 	})
 	if err != nil {
 		t.Errorf("skip policy error = %v, want nil", err)
 	}
 
 	stats := h.Stats()
-	if stats.Skipped != 1 {
-		t.Errorf("skipped = %d, want 1", stats.Skipped)
+	if stats.SkippedCount != 1 {
+		t.Errorf("skipped = %d, want 1", stats.SkippedCount)
 	}
 }
 
 func TestErrorHandlerMaxErrors(t *testing.T) {
 	h := NewErrorHandler(ErrorPolicySkip).WithMaxErrors(2)
 
-	_ = h.HandleError(ErrorRecord{Type: ErrorTypeMalformedRow})
-	_ = h.HandleError(ErrorRecord{Type: ErrorTypeMalformedRow})
-	err := h.HandleError(ErrorRecord{Type: ErrorTypeMalformedRow})
+	_, _ = h.HandleError(ErrorRecord{ErrorType: ErrorTypeMalformedRow})
+	_, _ = h.HandleError(ErrorRecord{ErrorType: ErrorTypeMalformedRow})
+	_, err := h.HandleError(ErrorRecord{ErrorType: ErrorTypeMalformedRow})
 
 	if err == nil {
 		t.Error("should return error after exceeding max errors")
@@ -416,12 +416,12 @@ func TestErrorHandlerMaxErrors(t *testing.T) {
 
 func TestErrorHandlerReset(t *testing.T) {
 	h := NewErrorHandler(ErrorPolicySkip)
-	_ = h.HandleError(ErrorRecord{Type: ErrorTypeMalformedRow})
+	_, _ = h.HandleError(ErrorRecord{ErrorType: ErrorTypeMalformedRow})
 	h.Reset()
 
 	stats := h.Stats()
-	if stats.Total != 0 {
-		t.Errorf("total after reset = %d, want 0", stats.Total)
+	if stats.ErrorCount != 0 {
+		t.Errorf("error count after reset = %d, want 0", stats.ErrorCount)
 	}
 }
 
@@ -433,7 +433,7 @@ func TestErrorHandlerCallbacks(t *testing.T) {
 		WithOnError(func(er ErrorRecord) { onErrorCalled = true }).
 		WithOnSkip(func(rowNum int64, reason string) { onSkipCalled = true })
 
-	_ = h.HandleError(ErrorRecord{Type: ErrorTypeMalformedRow, RowNumber: 1})
+	_, _ = h.HandleError(ErrorRecord{ErrorType: ErrorTypeMalformedRow, RowNumber: 1})
 
 	if !onErrorCalled {
 		t.Error("OnError callback was not called")
