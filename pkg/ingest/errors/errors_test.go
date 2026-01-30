@@ -123,6 +123,8 @@ func TestNewHandler(t *testing.T) {
 }
 
 func TestHandlerMaxErrors(t *testing.T) {
+	// maxErrors=3 means error is returned when len(errors) >= 3
+	// So the 3rd call triggers the limit
 	h := NewHandler(PolicySkip, 3)
 
 	for i := int64(1); i <= 4; i++ {
@@ -130,11 +132,11 @@ func TestHandlerMaxErrors(t *testing.T) {
 			RowNumber: i,
 			Error:     errors.New("error"),
 		})
-		if i <= 3 && err != nil {
+		if i < 3 && err != nil {
 			t.Errorf("Handle(%d) error = %v, want nil (under max)", i, err)
 		}
-		if i == 4 && err == nil {
-			t.Error("Handle(4) should return error (exceeds max)")
+		if i >= 3 && err == nil {
+			t.Errorf("Handle(%d) should return error (at or exceeds max)", i)
 		}
 	}
 }
