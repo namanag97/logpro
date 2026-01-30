@@ -274,6 +274,26 @@ func matchPattern(columns map[string]string, patterns []string) string {
 	return ""
 }
 
+// SetProcessMiningMapping applies the process-mining column mapping to a
+// pipeline Config. This keeps the PM-specific columns in the generic
+// ColumnMapping so consumers can work with any schema.
+func SetProcessMiningMapping(cfg *pipeline.Config, caseID, activity, timestamp, resource string) {
+	cfg.CaseIDColumn = caseID
+	cfg.ActivityColumn = activity
+	cfg.TimestampColumn = timestamp
+	cfg.ResourceColumn = resource
+
+	if cfg.ColumnMapping == nil {
+		cfg.ColumnMapping = make(map[string]string)
+	}
+	cfg.ColumnMapping["case_id"] = caseID
+	cfg.ColumnMapping["activity"] = activity
+	cfg.ColumnMapping["timestamp"] = timestamp
+	if resource != "" {
+		cfg.ColumnMapping["resource"] = resource
+	}
+}
+
 func escapePath(path string) string {
 	return strings.ReplaceAll(path, "'", "''")
 }
