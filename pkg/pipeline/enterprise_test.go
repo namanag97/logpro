@@ -569,7 +569,7 @@ func TestDeduplicatorReset(t *testing.T) {
 	d.CheckAndAdd(map[string]interface{}{"id": "1"})
 	d.Reset()
 
-	dup := d.CheckAndAdd(map[string]interface{}{"id": "1"})
+	dup, _ := d.CheckAndAdd(map[string]interface{}{"id": "1"})
 	if dup {
 		t.Error("after Reset, record should not be duplicate")
 	}
