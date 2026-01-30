@@ -142,10 +142,10 @@ func init() {
 
 	// CSV-specific flags
 	convertCmd.Flags().StringVar(&csvDelimiter, "delimiter", ",", "CSV field delimiter")
-	convertCmd.Flags().StringVar(&csvCaseIDColumn, "case-id", "case:concept:name", "Case ID column name")
-	convertCmd.Flags().StringVar(&csvActivityColumn, "activity", "concept:name", "Activity column name")
-	convertCmd.Flags().StringVar(&csvTimestampColumn, "timestamp", "time:timestamp", "Timestamp column name")
-	convertCmd.Flags().StringVar(&csvResourceColumn, "resource", "org:resource", "Resource column name")
+	convertCmd.Flags().StringVar(&csvCaseIDColumn, "case-id", "", "Case ID column name (optional, for process mining)")
+	convertCmd.Flags().StringVar(&csvActivityColumn, "activity", "", "Activity column name (optional, for process mining)")
+	convertCmd.Flags().StringVar(&csvTimestampColumn, "timestamp", "", "Timestamp column name (optional, for process mining)")
+	convertCmd.Flags().StringVar(&csvResourceColumn, "resource", "", "Resource column name (optional, for process mining)")
 	convertCmd.Flags().StringVar(&csvTimestampFormat, "timestamp-format", "2006-01-02T15:04:05.000Z07:00", "Timestamp format (Go time layout)")
 
 	// Metadata flags
