@@ -85,24 +85,9 @@ type Config struct {
 	// BufferSize is the size of the read buffer in bytes.
 	BufferSize int
 
-	// CaseIDColumn is the name/index of the case ID column (CSV).
-	// Deprecated: Use ColumnMapping["case_id"] via Column().
-	CaseIDColumn string
-
-	// ActivityColumn is the name/index of the activity column (CSV).
-	// Deprecated: Use ColumnMapping["activity"] via Column().
-	ActivityColumn string
-
-	// TimestampColumn is the name/index of the timestamp column (CSV).
-	// Deprecated: Use ColumnMapping["timestamp"] via Column().
-	TimestampColumn string
-
-	// ResourceColumn is the name/index of the resource column (CSV).
-	// Deprecated: Use ColumnMapping["resource"] via Column().
-	ResourceColumn string
-
 	// ColumnMapping maps logical role names to physical column names.
-	// Standard roles: "case_id", "activity", "timestamp", "resource".
+	// Process-mining roles: "case_id", "activity", "timestamp", "resource".
+	// When empty, all columns are preserved as generic attributes.
 	ColumnMapping map[string]string
 
 	// TimestampFormat is the expected timestamp format (Go time layout).
@@ -112,42 +97,26 @@ type Config struct {
 	Delimiter byte
 }
 
-// Column returns the physical column name for a logical role.
-// It checks ColumnMapping first, then falls back to the legacy fields.
+// Column returns the physical column name for a logical role, or "" if unmapped.
 func (c Config) Column(role string) string {
 	if c.ColumnMapping != nil {
-		if v, ok := c.ColumnMapping[role]; ok && v != "" {
-			return v
-		}
-	}
-	switch role {
-	case "case_id":
-		return c.CaseIDColumn
-	case "activity":
-		return c.ActivityColumn
-	case "timestamp":
-		return c.TimestampColumn
-	case "resource":
-		return c.ResourceColumn
+		return c.ColumnMapping[role]
 	}
 	return ""
 }
 
+// HasPMColumns returns true if process-mining columns are configured.
+func (c Config) HasPMColumns() bool {
+	return c.Column("case_id") != "" && c.Column("activity") != "" && c.Column("timestamp") != ""
+}
+
 // DefaultConfig returns a Config with sensible defaults.
+// No column mapping is set — all columns are preserved as-is.
 func DefaultConfig() Config {
 	return Config{
 		BatchSize:       1024,
 		BufferSize:      64 * 1024,
-		CaseIDColumn:    "case:concept:name",
-		ActivityColumn:  "concept:name",
-		TimestampColumn: "time:timestamp",
-		ResourceColumn:  "org:resource",
-		ColumnMapping: map[string]string{
-			"case_id":   "case:concept:name",
-			"activity":  "concept:name",
-			"timestamp": "time:timestamp",
-			"resource":  "org:resource",
-		},
+		ColumnMapping:   make(map[string]string),
 		TimestampFormat: "2006-01-02T15:04:05.000Z07:00",
 		Delimiter:       ',',
 	}
