@@ -550,21 +550,6 @@ func (s *IcebergSink) Close() error {
 	return nil
 }
 
-func mapCompressionCodec(name string) compress.Compression {
-	switch name {
-	case "snappy":
-		return compress.Codecs.Snappy
-	case "gzip":
-		return compress.Codecs.Gzip
-	case "zstd":
-		return compress.Codecs.Zstd
-	case "lz4":
-		return compress.Codecs.Lz4
-	default:
-		return compress.Codecs.Snappy
-	}
-}
-
 // IcebergSinkFactory creates an IcebergSink from config.
 func IcebergSinkFactory(cfg pipeline.Config) (pipeline.Sink, error) {
 	return NewIcebergSink(cfg)
