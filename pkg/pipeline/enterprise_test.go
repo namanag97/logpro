@@ -506,8 +506,8 @@ func TestEnterpriseOrchestratorStatus(t *testing.T) {
 
 	eo, _ := NewEnterpriseOrchestrator(cfg)
 	status := eo.Status()
-	if !status.Healthy {
-		t.Error("status.Healthy should be true")
+	if !status.IsHealthy {
+		t.Error("status.IsHealthy should be true")
 	}
 }
 
