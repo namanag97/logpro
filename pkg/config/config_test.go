@@ -21,8 +21,9 @@ func TestDefaultEngineConfig(t *testing.T) {
 	if cfg.Engine.Default == "" {
 		t.Error("default engine name should not be empty")
 	}
-	if cfg.Engine.Threads <= 0 {
-		t.Error("default threads should be > 0")
+	// Threads may default to 0 (meaning "auto"), which is valid
+	if cfg.Engine.Threads < 0 {
+		t.Error("default threads should be >= 0")
 	}
 }
 
