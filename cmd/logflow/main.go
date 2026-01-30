@@ -55,6 +55,9 @@ var (
 
 	// Contract flags
 	generateContract bool
+
+	// Plugin flags
+	enableProcessMining bool
 )
 
 func main() {
