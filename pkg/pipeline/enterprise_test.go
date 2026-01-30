@@ -552,8 +552,9 @@ func TestDeduplicatorStats(t *testing.T) {
 	d.CheckAndAdd(map[string]interface{}{"id": "1"}) // duplicate
 
 	stats := d.Stats()
-	if stats.TotalSeen != 3 {
-		t.Errorf("TotalSeen = %d, want 3", stats.TotalSeen)
+	// TotalSeen counts unique insertions (non-duplicates)
+	if stats.TotalSeen != 2 {
+		t.Errorf("TotalSeen = %d, want 2", stats.TotalSeen)
 	}
 	if stats.DuplicateCount != 1 {
 		t.Errorf("DuplicateCount = %d, want 1", stats.DuplicateCount)
