@@ -495,8 +495,8 @@ func TestEnterpriseOrchestratorDLQStats(t *testing.T) {
 
 	eo := NewEnterpriseOrchestrator(cfg)
 	stats := eo.DLQStats()
-	if stats.TotalRecords != 0 {
-		t.Errorf("initial DLQ TotalRecords = %d, want 0", stats.TotalRecords)
+	if stats.RecordCount != 0 {
+		t.Errorf("initial DLQ RecordCount = %d, want 0", stats.RecordCount)
 	}
 }
 
