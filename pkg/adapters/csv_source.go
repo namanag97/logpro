@@ -10,6 +10,7 @@ import (
 
 	"github.com/logflow/logflow/internal/model"
 	"github.com/logflow/logflow/internal/pool"
+	"github.com/logflow/logflow/pkg/parser"
 	"github.com/logflow/logflow/pkg/pipeline"
 )
 
