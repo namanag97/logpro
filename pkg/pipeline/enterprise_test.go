@@ -349,7 +349,7 @@ func TestCheckpointManagerListIncomplete(t *testing.T) {
 
 func TestCheckpointManagerDelete(t *testing.T) {
 	dir := t.TempDir()
-	cm := NewCheckpointManager(dir)
+	cm, _ := NewCheckpointManager(dir)
 	_ = cm.Create("job1", "input.csv")
 	cm.Delete("job1")
 
