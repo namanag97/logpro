@@ -14,11 +14,8 @@ func init() {
 	}, "csv", "txt", "tsv")
 
 	// Register Sinks
-	RegisterSink("parquet-adapter", func(cfg pipeline.Config) (pipeline.Sink, error) {
-		return adapters.NewParquetSink(cfg)
-	})
+	RegisterSink("parquet", adapters.ParquetSinkFactory)
 	RegisterSink("iceberg", sinks.IcebergSinkFactory)
-	RegisterSink("parquet", sinks.ParquetSinkFactory)
 	RegisterSink("jsonl", sinks.JSONLSinkFactory)
 	RegisterSink("stdout", sinks.StdoutSinkFactory)
 
