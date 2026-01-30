@@ -32,18 +32,18 @@ func (m *entMockSource) Read(ctx context.Context, r interface{}, out chan<- *Eve
 	return nil
 }
 
-type mockSink struct {
+type entMockSink struct {
 	received []*Event
 }
 
-func (m *mockSink) Name() string { return "mock-sink" }
-func (m *mockSink) Write(ctx context.Context, in <-chan *Event) error {
+func (m *entMockSink) Name() string { return "mock-sink" }
+func (m *entMockSink) Write(ctx context.Context, in <-chan *Event) error {
 	for e := range in {
 		m.received = append(m.received, e)
 	}
 	return nil
 }
-func (m *mockSink) Close() error { return nil }
+func (m *entMockSink) Close() error { return nil }
 
 type mockProcessor struct {
 	name      string
