@@ -75,9 +75,9 @@ func TestConfigColumn(t *testing.T) {
 	if cfg.Column("case_id") != "CaseNr" {
 		t.Errorf("Column(case_id) = %q, want %q", cfg.Column("case_id"), "CaseNr")
 	}
-	// Non-mapped role should return the role itself
-	if cfg.Column("missing") != "missing" {
-		t.Errorf("Column(missing) = %q, want %q", cfg.Column("missing"), "missing")
+	// Non-mapped role returns "" (empty string)
+	if cfg.Column("missing") != "" {
+		t.Errorf("Column(missing) = %q, want empty string", cfg.Column("missing"))
 	}
 }
 
