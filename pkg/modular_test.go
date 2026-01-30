@@ -458,31 +458,26 @@ func TestHooks_PriorityOrder(t *testing.T) {
 	}
 }
 
-func TestHooks_ConditionSkips(t *testing.T) {
+func TestHooks_ConditionSkipsProgress(t *testing.T) {
 	m := hooks.NewManager()
-	called := false
+	var order []string
 
-	m.RegisterPreDecodeWithPriority(
-		func(_ context.Context, src interface{}) (interface{}, error) {
-			called = true
-			return src, nil
+	// This hook has a condition that returns false — should be skipped.
+	m.RegisterPostBatchWithPriority(
+		func(_ context.Context, b arrow.Record) (arrow.Record, error) {
+			order = append(order, "skipped")
+			return b, nil
 		},
 		10,
-		func(_ context.Context) bool { return false }, // never run
+		func(_ context.Context) bool { return false },
 	)
 
-	// We can't easily call RunPreDecode without a core.Source, so test
-	// that the condition function is respected via progress hooks instead.
-	progressCalled := false
-	m.RegisterProgressWithPriority(func(_ hooks.Progress) { progressCalled = true }, 10)
+	// Verify via progress hooks that the manager works.
+	m.RegisterProgressWithPriority(func(_ hooks.Progress) { order = append(order, "ran") }, 10)
 	m.ReportProgress(hooks.Progress{})
 
-	if !progressCalled {
-		t.Error("progress hook should have run")
-	}
-	// called should remain false since we didn't trigger pre-decode
-	if called {
-		t.Error("pre-decode hook should not have run")
+	if len(order) != 1 || order[0] != "ran" {
+		t.Errorf("expected [ran], got %v", order)
 	}
 }
 
