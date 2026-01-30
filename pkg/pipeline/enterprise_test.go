@@ -181,7 +181,9 @@ func TestResilientProcessorCircuitBreakerState(t *testing.T) {
 
 func TestCheckpointedProcessorName(t *testing.T) {
 	inner := &entMockProcessor{name: "cp-inner"}
-	cp := resilience.NewCheckpoint("in.csv", "out.parquet", "hash")
+	dir := t.TempDir()
+	mgr, _ := checkpoint.NewManager(dir)
+	cp := mgr.Create("job-cp", "in.csv", "out.parquet")
 	cpp := NewCheckpointedProcessor(inner, cp, 2)
 
 	if cpp.Name() != "cp-inner" {
@@ -191,7 +193,9 @@ func TestCheckpointedProcessorName(t *testing.T) {
 
 func TestCheckpointedProcessorProcess(t *testing.T) {
 	inner := &entMockProcessor{name: "inner"}
-	cp := resilience.NewCheckpoint("in.csv", "out.parquet", "hash")
+	dir := t.TempDir()
+	mgr, _ := checkpoint.NewManager(dir)
+	cp := mgr.Create("job-cp2", "in.csv", "out.parquet")
 	cpp := NewCheckpointedProcessor(inner, cp, 2)
 
 	in := make(chan *Event, 10)
