@@ -1,28 +1,39 @@
 package ingest
 
 import (
-"bufio"
-"bytes"
-"compress/gzip"
-"context"
-"encoding/json"
-"fmt"
-"io"
-"os"
-"path/filepath"
-"strconv"
-"sync"
-"sync/atomic"
-"time"
-"unicode/utf8"
+	"bufio"
+	"bytes"
+	"compress/gzip"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strconv"
+	"sync"
+	"sync/atomic"
+	"time"
+	"unicode/utf8"
+	"unsafe"
 
-"github.com/apache/arrow/go/v14/arrow"
-"github.com/apache/arrow/go/v14/arrow/array"
-"github.com/apache/arrow/go/v14/arrow/memory"
-"github.com/apache/arrow/go/v14/parquet"
-"github.com/apache/arrow/go/v14/parquet/compress"
-"github.com/apache/arrow/go/v14/parquet/pqarrow"
+	"github.com/apache/arrow/go/v14/arrow"
+	"github.com/apache/arrow/go/v14/arrow/array"
+	"github.com/apache/arrow/go/v14/arrow/memory"
+	"github.com/apache/arrow/go/v14/parquet"
+	"github.com/apache/arrow/go/v14/parquet/compress"
+	"github.com/apache/arrow/go/v14/parquet/pqarrow"
 )
+
+// bytesToString converts a byte slice to a string without copying.
+// The caller must ensure the byte slice is not modified while the string is in use.
+// This is safe for read-only operations like strconv.Parse* and time.Parse.
+func bytesToString(b []byte) string {
+	if len(b) == 0 {
+		return ""
+	}
+	return unsafe.String(&b[0], len(b))
+}
 
 // RobustPath handles messy data with error recovery and validation.
 type RobustPath struct {
