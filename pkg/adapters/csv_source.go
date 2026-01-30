@@ -241,34 +241,41 @@ func (s *CSVSource) Errors() []pipeline.ErrorRecord {
 	return s.errorHandler.Errors()
 }
 
-// resolveColumnIndices finds the indices of required columns.
+// resolveColumnIndices finds the indices of mapped columns.
 func (s *CSVSource) resolveColumnIndices(columns [][]byte) {
 	for i, col := range columns {
 		colStr := string(col)
-		switch colStr {
-		case s.cfg.CaseIDColumn:
+		if colStr == s.cfg.Column("case_id") {
 			s.caseIdx = i
-		case s.cfg.ActivityColumn:
+		}
+		if colStr == s.cfg.Column("activity") {
 			s.activityIdx = i
-		case s.cfg.TimestampColumn:
+		}
+		if colStr == s.cfg.Column("timestamp") {
 			s.timestampIdx = i
-		case s.cfg.ResourceColumn:
+		}
+		if colStr == s.cfg.Column("resource") {
 			s.resourceIdx = i
 		}
 	}
 }
 
+// hasPMColumns returns true if process-mining columns are configured and found.
+func (s *CSVSource) hasPMColumns() bool {
+	return s.caseIdx >= 0 && s.activityIdx >= 0 && s.timestampIdx >= 0
+}
+
 // getMissingColumns returns names of missing required columns.
 func (s *CSVSource) getMissingColumns() []string {
 	var missing []string
-	if s.caseIdx < 0 {
-		missing = append(missing, s.cfg.CaseIDColumn)
+	if col := s.cfg.Column("case_id"); col != "" && s.caseIdx < 0 {
+		missing = append(missing, col)
 	}
-	if s.activityIdx < 0 {
-		missing = append(missing, s.cfg.ActivityColumn)
+	if col := s.cfg.Column("activity"); col != "" && s.activityIdx < 0 {
+		missing = append(missing, col)
 	}
-	if s.timestampIdx < 0 {
-		missing = append(missing, s.cfg.TimestampColumn)
+	if col := s.cfg.Column("timestamp"); col != "" && s.timestampIdx < 0 {
+		missing = append(missing, col)
 	}
 	return missing
 }
