@@ -1,0 +1,20 @@
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# Build / test binaries
+*.test
+*.exe
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Generated test output
+*.parquet
+!examples/**/*.parquet
+
+# Personal notes
+notes.md
