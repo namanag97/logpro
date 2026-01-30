@@ -174,6 +174,7 @@ func DefaultConfig() Config {
 		ActivityColumn:   "concept:name",
 		TimestampColumn:  "time:timestamp",
 		ResourceColumn:   "org:resource",
+		ColumnMapping:    make(map[string]string),
 		BufferSize:       64 * 1024,
 		BatchSize:        1024,
 		Compression:      "snappy",
@@ -181,6 +182,30 @@ func DefaultConfig() Config {
 		MaxErrors:        0,               // No limit by default
 		ProcessorOptions: make(map[string]interface{}),
 	}
+}
+
+// ResolveColumnMapping builds a complete ColumnMapping from the legacy
+// process-mining fields. Call this before passing Config to generic consumers.
+func (c *Config) ResolveColumnMapping() map[string]string {
+	m := make(map[string]string)
+	// Copy existing generic mappings first
+	for k, v := range c.ColumnMapping {
+		m[k] = v
+	}
+	// Overlay process-mining specific fields (if set)
+	if c.CaseIDColumn != "" {
+		m["case_id"] = c.CaseIDColumn
+	}
+	if c.ActivityColumn != "" {
+		m["activity"] = c.ActivityColumn
+	}
+	if c.TimestampColumn != "" {
+		m["timestamp"] = c.TimestampColumn
+	}
+	if c.ResourceColumn != "" {
+		m["resource"] = c.ResourceColumn
+	}
+	return m
 }
 
 // Complexity represents the computational complexity of an operation.
