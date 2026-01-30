@@ -124,6 +124,7 @@ func NewPipeline() (*Pipeline, error) {
 		advDetector: detect.NewDetector(),
 		concLimiter: limiter,
 		config:      GlobalConfig,
+		plugins:     core.NewPluginRegistry(),
 		workers:     workers,
 		workerPool:  make(chan struct{}, workers),
 		batchQueue:  make(chan *batchWork, queueSize),
